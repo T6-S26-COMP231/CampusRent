@@ -1,5 +1,7 @@
-const API_BASE = import.meta.env.VITE_API_URL || '/api';
-
+const API_BASE = import.meta.env.VITE_API_URL
+  ? `${import.meta.env.VITE_API_URL}/api`
+  : '/api';
+  
 const API_ORIGIN = API_BASE.startsWith('http')
   ? new URL(API_BASE).origin
   : '';
