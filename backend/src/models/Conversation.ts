@@ -10,6 +10,10 @@ import mongoose, { Schema } from 'mongoose';
  *
  * US-17/US-18 may attach Message documents via conversation_id. This model
  * deliberately stores no message payload or history.
+ *
+ * TAC empty-conversation note (not fully resolved): identity is listing +
+ * participants. Message content is US-17. US-16 keeps a conversation shell
+ * without inventing placeholder messages pending acceptance review.
  */
 export interface ConversationDoc {
   _id: number;

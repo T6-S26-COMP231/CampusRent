@@ -3,25 +3,52 @@ import { authenticate, requireVerifiedStudent } from '../middleware/auth';
 import { nextId } from '../models/Counter';
 import {
   Conversation,
+  ConversationDoc,
+  ConversationIdentity,
   conversationIdentity,
   toConversationRow,
 } from '../models/Conversation';
 import { Listing } from '../models/Listing';
+import { RentalRequest } from '../models/RentalRequest';
 import { User } from '../models/User';
 import { asyncHandler } from '../utils/asyncHandler';
 
 const router = Router();
 router.use(authenticate, requireVerifiedStudent);
 
+function isDuplicateKeyError(error: unknown): boolean {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    'code' in error &&
+    (error as { code?: number }).code === 11000
+  );
+}
+
+async function findConversationByIdentity(identity: ConversationIdentity) {
+  return Conversation.findOne(identity);
+}
+
 /**
- * US-16.4 — start a conversation.
+ * US-16.5 — participant authorization and duplicate prevention.
  *
- * Body: { listing_id, recipient_id }. The initiator is always req.user.id.
- * Full owner/renter authorization and duplicate reuse belong to US-16.5.
+ * Body: { listing_id, recipient_id }. Initiator is always req.user.id.
  *
- * Empty-conversation note (TAC): US-16 persists the conversation shell only.
- * Message content is intentionally absent until US-17; this endpoint does not
- * invent placeholder messages.
+ * Authorization:
+ * - Both participants must be distinct verified registered students.
+ * - One participant must be the listing owner.
+ * - Non-owner initiator may only message the listing owner (prospective renter).
+ * - Listing owner may only message a user who has a rental request for that listing.
+ *
+ * Duplicates:
+ * - Same listing + normalized participant pair returns the existing row (200).
+ * - First create returns 201. Concurrent creates catch MongoDB 11000 and return 200.
+ *
+ * Empty-conversation assumption (TAC ambiguity, not fully resolved):
+ * US-16 identifies a conversation by listing + participants only. Message content
+ * belongs to US-17. This endpoint still creates a conversation shell without
+ * inventing placeholder messages; acceptance review should confirm that
+ * interpretation against the TAC “empty conversations are not allowed” rule.
  */
 router.post(
   '/',
@@ -62,8 +89,39 @@ router.post(
     if (!recipient) {
       return res.status(404).json({ error: 'Recipient not found' });
     }
+    if (recipient.role !== 'student' || recipient.verification_status !== 'verified') {
+      return res.status(403).json({
+        error: 'Conversations may only be started with verified registered students',
+      });
+    }
+    if (recipient.status === 'suspended') {
+      return res.status(403).json({ error: 'Recipient account is not available' });
+    }
 
-    let identity;
+    const isOwnerInitiator = listing.owner_id === initiatorId;
+    const isOwnerRecipient = listing.owner_id === recipientId;
+
+    if (isOwnerInitiator) {
+      const renterRequest = await RentalRequest.findOne({
+        listing_id: listingId,
+        renter_id: recipientId,
+      })
+        .select('_id')
+        .lean();
+
+      if (!renterRequest) {
+        return res.status(403).json({
+          error:
+            'Listing owners may only start conversations with users who requested this listing',
+        });
+      }
+    } else if (!isOwnerRecipient) {
+      return res.status(403).json({
+        error: 'Non-owners may only start a conversation with the listing owner',
+      });
+    }
+
+    let identity: ConversationIdentity;
     try {
       identity = conversationIdentity(listingId, initiatorId, recipientId);
     } catch (error) {
@@ -72,12 +130,26 @@ router.post(
       });
     }
 
-    const conversation = await Conversation.create({
-      _id: await nextId('conversations'),
-      ...identity,
-    });
+    const existing = await findConversationByIdentity(identity);
+    if (existing) {
+      return res.status(200).json(toConversationRow(existing));
+    }
 
-    return res.status(201).json(toConversationRow(conversation));
+    try {
+      const created = await Conversation.create({
+        _id: await nextId('conversations'),
+        ...identity,
+      });
+      return res.status(201).json(toConversationRow(created));
+    } catch (error) {
+      if (!isDuplicateKeyError(error)) throw error;
+
+      const raced = await findConversationByIdentity(identity);
+      if (!raced) {
+        throw error;
+      }
+      return res.status(200).json(toConversationRow(raced as ConversationDoc));
+    }
   })
 );
 

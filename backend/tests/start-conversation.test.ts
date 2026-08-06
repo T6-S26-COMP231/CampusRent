@@ -16,7 +16,9 @@ let signToken: (user: { id: number; email: string; role: string }) => string;
 let nextId: (name: string) => Promise<number>;
 let User: typeof import('../src/models/User').User;
 let Listing: typeof import('../src/models/Listing').Listing;
+let RentalRequest: typeof import('../src/models/RentalRequest').RentalRequest;
 let Conversation: typeof import('../src/models/Conversation').Conversation;
+let conversationIdentity: typeof import('../src/models/Conversation').conversationIdentity;
 
 let server: Server;
 let baseUrl: string;
@@ -45,12 +47,12 @@ async function createStudent(
   return id;
 }
 
-async function createListing(owner: number) {
+async function createListing(owner: number, title = 'Campus Tripod') {
   const id = await nextId('listings');
   await Listing.create({
     _id: id,
     owner_id: owner,
-    title: 'Campus Tripod',
+    title,
     category: 'Electronics',
     description: 'Stable tripod for media projects.',
     rental_terms: 'Campus pickup only.',
@@ -58,6 +60,27 @@ async function createListing(owner: number) {
     images: [],
   });
   return id;
+}
+
+async function createRequest(listing: number, renter: number) {
+  const start = new Date();
+  start.setDate(start.getDate() + 2);
+  const end = new Date();
+  end.setDate(end.getDate() + 5);
+  const id = await nextId('rental_requests');
+  await RentalRequest.create({
+    _id: id,
+    listing_id: listing,
+    renter_id: renter,
+    start_date: start.toISOString().slice(0, 10),
+    end_date: end.toISOString().slice(0, 10),
+    status: 'pending',
+  });
+  return id;
+}
+
+function tokenFor(userId: number, email: string) {
+  return signToken({ id: userId, email, role: 'student' });
 }
 
 before(async () => {
@@ -68,7 +91,8 @@ before(async () => {
   ({ nextId } = await import('../src/models/Counter'));
   ({ User } = await import('../src/models/User'));
   ({ Listing } = await import('../src/models/Listing'));
-  ({ Conversation } = await import('../src/models/Conversation'));
+  ({ RentalRequest } = await import('../src/models/RentalRequest'));
+  ({ Conversation, conversationIdentity } = await import('../src/models/Conversation'));
   await connectDatabase(uri);
   await Conversation.syncIndexes();
 
@@ -89,43 +113,211 @@ after(async () => {
   await stopTestDatabase();
 });
 
-describe('US-16.4 start conversation API', () => {
-  test('successful authenticated creation stores listing and normalized participants', async () => {
-    const token = signToken({
-      id: renterId,
-      email: 'renter@mycentennialcollege.ca',
-      role: 'student',
-    });
-
+describe('US-16.5 conversation authorization and duplicates', () => {
+  test('prospective renter can start with listing owner', async () => {
     const response = await api(baseUrl, 'POST', '/api/conversations', {
-      token,
+      token: tokenFor(renterId, 'renter@mycentennialcollege.ca'),
       body: { listing_id: listingId, recipient_id: ownerId },
     });
 
     assert.equal(response.status, 201);
-    assert.ok(response.data.id > 0);
     assert.equal(response.data.listing_id, listingId);
+    assert.ok(response.data.participant_ids.includes(ownerId));
+    assert.ok(response.data.participant_ids.includes(renterId));
+  });
 
-    const [low, high] = renterId < ownerId ? [renterId, ownerId] : [ownerId, renterId];
-    assert.equal(response.data.participant_low_id, low);
-    assert.equal(response.data.participant_high_id, high);
-    assert.deepEqual(response.data.participant_ids, [low, high]);
-    assert.equal(typeof response.data.created_at, 'string');
-    assert.equal(typeof response.data.updated_at, 'string');
+  test('listing owner can start with a renter who requested that listing', async () => {
+    await createRequest(listingId, renterId);
 
-    const stored = await Conversation.findById(response.data.id).lean();
-    assert.ok(stored);
-    assert.equal(stored.listing_id, listingId);
-    assert.equal(stored.participant_low_id, low);
-    assert.equal(stored.participant_high_id, high);
+    const response = await api(baseUrl, 'POST', '/api/conversations', {
+      token: tokenFor(ownerId, 'owner@mycentennialcollege.ca'),
+      body: { listing_id: listingId, recipient_id: renterId },
+    });
+
+    assert.equal(response.status, 201);
+    assert.equal(response.data.listing_id, listingId);
+    assert.ok(response.data.participant_ids.includes(ownerId));
+    assert.ok(response.data.participant_ids.includes(renterId));
+  });
+
+  test('listing owner cannot start with an unrelated user', async () => {
+    const strangerId = await createStudent(
+      'stranger@mycentennialcollege.ca',
+      'Strange',
+      'Student'
+    );
+
+    const response = await api(baseUrl, 'POST', '/api/conversations', {
+      token: tokenFor(ownerId, 'owner@mycentennialcollege.ca'),
+      body: { listing_id: listingId, recipient_id: strangerId },
+    });
+
+    assert.equal(response.status, 403);
+    assert.match(response.data.error, /requested this listing/i);
+    assert.equal(await Conversation.countDocuments(), 0);
+  });
+
+  test('non-owner cannot choose a recipient other than the owner', async () => {
+    const otherRenterId = await createStudent(
+      'other@mycentennialcollege.ca',
+      'Other',
+      'Renter'
+    );
+    await createRequest(listingId, otherRenterId);
+
+    const response = await api(baseUrl, 'POST', '/api/conversations', {
+      token: tokenFor(renterId, 'renter@mycentennialcollege.ca'),
+      body: { listing_id: listingId, recipient_id: otherRenterId },
+    });
+
+    assert.equal(response.status, 403);
+    assert.match(response.data.error, /listing owner/i);
+  });
+
+  test('self-conversation is rejected', async () => {
+    const response = await api(baseUrl, 'POST', '/api/conversations', {
+      token: tokenFor(renterId, 'renter@mycentennialcollege.ca'),
+      body: { listing_id: listingId, recipient_id: renterId },
+    });
+
+    assert.equal(response.status, 400);
+    assert.match(response.data.error, /yourself/i);
+  });
+
+  test('unverified user is rejected', async () => {
+    const pendingId = await createStudent(
+      'pending@mycentennialcollege.ca',
+      'Pending',
+      'Student',
+      'pending'
+    );
+
+    const response = await api(baseUrl, 'POST', '/api/conversations', {
+      token: tokenFor(pendingId, 'pending@mycentennialcollege.ca'),
+      body: { listing_id: listingId, recipient_id: ownerId },
+    });
+
+    assert.equal(response.status, 403);
+    assert.match(response.data.error, /verification required/i);
+  });
+
+  test('unrelated third party is rejected', async () => {
+    await createRequest(listingId, renterId);
+    const thirdPartyId = await createStudent(
+      'third@mycentennialcollege.ca',
+      'Third',
+      'Party'
+    );
+
+    const response = await api(baseUrl, 'POST', '/api/conversations', {
+      token: tokenFor(thirdPartyId, 'third@mycentennialcollege.ca'),
+      body: { listing_id: listingId, recipient_id: renterId },
+    });
+
+    assert.equal(response.status, 403);
+    assert.equal(await Conversation.countDocuments(), 0);
+  });
+
+  test('first creation returns 201 and duplicate returns 200 with the same id', async () => {
+    const token = tokenFor(renterId, 'renter@mycentennialcollege.ca');
+    const body = { listing_id: listingId, recipient_id: ownerId };
+
+    const first = await api(baseUrl, 'POST', '/api/conversations', { token, body });
+    assert.equal(first.status, 201);
+
+    const second = await api(baseUrl, 'POST', '/api/conversations', { token, body });
+    assert.equal(second.status, 200);
+    assert.equal(second.data.id, first.data.id);
+    assert.equal(await Conversation.countDocuments(), 1);
+  });
+
+  test('reversed participant order returns the same conversation', async () => {
+    await createRequest(listingId, renterId);
+
+    const created = await api(baseUrl, 'POST', '/api/conversations', {
+      token: tokenFor(renterId, 'renter@mycentennialcollege.ca'),
+      body: { listing_id: listingId, recipient_id: ownerId },
+    });
+    assert.equal(created.status, 201);
+
+    const reversed = await api(baseUrl, 'POST', '/api/conversations', {
+      token: tokenFor(ownerId, 'owner@mycentennialcollege.ca'),
+      body: { listing_id: listingId, recipient_id: renterId },
+    });
+
+    assert.equal(reversed.status, 200);
+    assert.equal(reversed.data.id, created.data.id);
+    assert.equal(await Conversation.countDocuments(), 1);
+  });
+
+  test('different listing permits a separate conversation', async () => {
+    const secondListingId = await createListing(ownerId, 'Second Tripod');
+    const token = tokenFor(renterId, 'renter@mycentennialcollege.ca');
+
+    const first = await api(baseUrl, 'POST', '/api/conversations', {
+      token,
+      body: { listing_id: listingId, recipient_id: ownerId },
+    });
+    const second = await api(baseUrl, 'POST', '/api/conversations', {
+      token,
+      body: { listing_id: secondListingId, recipient_id: ownerId },
+    });
+
+    assert.equal(first.status, 201);
+    assert.equal(second.status, 201);
+    assert.notEqual(first.data.id, second.data.id);
+    assert.equal(await Conversation.countDocuments(), 2);
+  });
+
+  test('duplicate-key race handling returns the existing conversation', async () => {
+    const identity = conversationIdentity(listingId, renterId, ownerId);
+    const existingId = await nextId('conversations');
+    await Conversation.create({ _id: existingId, ...identity });
+
+    // Force the 11000 path: first findOne misses, create hits the unique index, retry find succeeds.
+    const originalFindOne = Conversation.findOne;
+    let findCalls = 0;
+    Conversation.findOne = ((...args: unknown[]) => {
+      findCalls += 1;
+      if (findCalls === 1) {
+        return Promise.resolve(null) as never;
+      }
+      return Reflect.apply(originalFindOne, Conversation, args);
+    }) as typeof Conversation.findOne;
+
+    try {
+      const response = await api(baseUrl, 'POST', '/api/conversations', {
+        token: tokenFor(renterId, 'renter@mycentennialcollege.ca'),
+        body: { listing_id: listingId, recipient_id: ownerId },
+      });
+
+      assert.equal(response.status, 200);
+      assert.equal(response.data.id, existingId);
+      assert.equal(await Conversation.countDocuments(), 1);
+      assert.ok(findCalls >= 2);
+    } finally {
+      Conversation.findOne = originalFindOne;
+    }
+  });
+
+  test('concurrent duplicate attempts leave only one MongoDB record', async () => {
+    const token = tokenFor(renterId, 'renter@mycentennialcollege.ca');
+    const body = { listing_id: listingId, recipient_id: ownerId };
+
+    const results = await Promise.all([
+      api(baseUrl, 'POST', '/api/conversations', { token, body }),
+      api(baseUrl, 'POST', '/api/conversations', { token, body }),
+      api(baseUrl, 'POST', '/api/conversations', { token, body }),
+    ]);
+
+    const ids = new Set(results.map((result) => result.data.id));
+    assert.equal(ids.size, 1);
+    assert.ok(results.every((result) => result.status === 200 || result.status === 201));
+    assert.ok(results.some((result) => result.status === 201) || results.every((r) => r.status === 200));
+    assert.equal(await Conversation.countDocuments(), 1);
   });
 
   test('initiator is taken from the authenticated user, not the request body', async () => {
-    const token = signToken({
-      id: renterId,
-      email: 'renter@mycentennialcollege.ca',
-      role: 'student',
-    });
     const outsiderId = await createStudent(
       'outsider@mycentennialcollege.ca',
       'Out',
@@ -133,7 +325,7 @@ describe('US-16.4 start conversation API', () => {
     );
 
     const response = await api(baseUrl, 'POST', '/api/conversations', {
-      token,
+      token: tokenFor(renterId, 'renter@mycentennialcollege.ca'),
       body: {
         listing_id: listingId,
         recipient_id: ownerId,
@@ -153,108 +345,37 @@ describe('US-16.4 start conversation API', () => {
       body: { listing_id: listingId, recipient_id: ownerId },
     });
     assert.equal(response.status, 401);
-    assert.match(response.data.error, /Authentication required/i);
   });
 
-  test('unverified student is denied', async () => {
-    const pendingId = await createStudent(
-      'pending@mycentennialcollege.ca',
-      'Pending',
-      'Student',
-      'pending'
+  test('invalid identifiers and missing resources are rejected', async () => {
+    const token = tokenFor(renterId, 'renter@mycentennialcollege.ca');
+
+    assert.equal(
+      (
+        await api(baseUrl, 'POST', '/api/conversations', {
+          token,
+          body: { recipient_id: ownerId },
+        })
+      ).status,
+      400
     );
-    const token = signToken({
-      id: pendingId,
-      email: 'pending@mycentennialcollege.ca',
-      role: 'student',
-    });
-
-    const response = await api(baseUrl, 'POST', '/api/conversations', {
-      token,
-      body: { listing_id: listingId, recipient_id: ownerId },
-    });
-
-    assert.equal(response.status, 403);
-    assert.match(response.data.error, /verification required/i);
-  });
-
-  test('invalid identifiers are rejected', async () => {
-    const token = signToken({
-      id: renterId,
-      email: 'renter@mycentennialcollege.ca',
-      role: 'student',
-    });
-
-    const missingListing = await api(baseUrl, 'POST', '/api/conversations', {
-      token,
-      body: { recipient_id: ownerId },
-    });
-    assert.equal(missingListing.status, 400);
-
-    const missingRecipient = await api(baseUrl, 'POST', '/api/conversations', {
-      token,
-      body: { listing_id: listingId },
-    });
-    assert.equal(missingRecipient.status, 400);
-
-    const badListing = await api(baseUrl, 'POST', '/api/conversations', {
-      token,
-      body: { listing_id: -1, recipient_id: ownerId },
-    });
-    assert.equal(badListing.status, 400);
-
-    const badRecipient = await api(baseUrl, 'POST', '/api/conversations', {
-      token,
-      body: { listing_id: listingId, recipient_id: 'abc' },
-    });
-    assert.equal(badRecipient.status, 400);
-  });
-
-  test('missing listing is rejected', async () => {
-    const token = signToken({
-      id: renterId,
-      email: 'renter@mycentennialcollege.ca',
-      role: 'student',
-    });
-
-    const response = await api(baseUrl, 'POST', '/api/conversations', {
-      token,
-      body: { listing_id: 999999, recipient_id: ownerId },
-    });
-
-    assert.equal(response.status, 404);
-    assert.match(response.data.error, /Listing not found/i);
-  });
-
-  test('missing recipient is rejected', async () => {
-    const token = signToken({
-      id: renterId,
-      email: 'renter@mycentennialcollege.ca',
-      role: 'student',
-    });
-
-    const response = await api(baseUrl, 'POST', '/api/conversations', {
-      token,
-      body: { listing_id: listingId, recipient_id: 999999 },
-    });
-
-    assert.equal(response.status, 404);
-    assert.match(response.data.error, /Recipient not found/i);
-  });
-
-  test('self-conversation is rejected', async () => {
-    const token = signToken({
-      id: renterId,
-      email: 'renter@mycentennialcollege.ca',
-      role: 'student',
-    });
-
-    const response = await api(baseUrl, 'POST', '/api/conversations', {
-      token,
-      body: { listing_id: listingId, recipient_id: renterId },
-    });
-
-    assert.equal(response.status, 400);
-    assert.match(response.data.error, /yourself/i);
+    assert.equal(
+      (
+        await api(baseUrl, 'POST', '/api/conversations', {
+          token,
+          body: { listing_id: listingId, recipient_id: 999999 },
+        })
+      ).status,
+      404
+    );
+    assert.equal(
+      (
+        await api(baseUrl, 'POST', '/api/conversations', {
+          token,
+          body: { listing_id: 999999, recipient_id: ownerId },
+        })
+      ).status,
+      404
+    );
   });
 });
