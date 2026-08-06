@@ -2,9 +2,23 @@ import { useEffect, useState } from 'react';
 import { CheckCircle2, ClipboardList, XCircle } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { api, RentalRequest } from '../api/client';
+import StartConversationButton from '../components/StartConversationButton';
 import StatusBadge from '../components/StatusBadge';
+import { useAuth } from '../context/AuthContext';
+import { ConversationTarget } from '../utils/startConversation';
+
+function ownerTargetForRequest(request: RentalRequest): ConversationTarget | null {
+  if (!request.owner) return null;
+  return {
+    listingId: request.listing?.id ?? request.listing_id,
+    counterpartId: request.owner.id,
+    counterpartName: `${request.owner.first_name} ${request.owner.last_name}`.trim(),
+    counterpartRole: 'owner',
+  };
+}
 
 export default function MyRequestsPage() {
+  const { user } = useAuth();
   const [requests, setRequests] = useState<RentalRequest[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -194,43 +208,49 @@ export default function MyRequestsPage() {
                   )}
                 </div>
 
-                {request.status === 'pending' &&
-                  confirmCancelId !== request.id &&
-                  confirmCompleteId !== request.id && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setError('');
-                        setMessage('');
-                        setConfirmCompleteId(null);
-                        setConfirmCancelId(request.id);
-                      }}
-                      className="btn-secondary shrink-0"
+                {confirmCancelId !== request.id && confirmCompleteId !== request.id && (
+                  <div className="flex shrink-0 flex-col gap-2 sm:items-stretch">
+                    <StartConversationButton
+                      viewerId={user?.id}
+                      target={ownerTargetForRequest(request)}
                       disabled={busyId === request.id}
-                    >
-                      <XCircle className="h-4 w-4" />
-                      Cancel Request
-                    </button>
-                  )}
+                    />
 
-                {request.status === 'accepted' &&
-                  confirmCancelId !== request.id &&
-                  confirmCompleteId !== request.id && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setError('');
-                        setMessage('');
-                        setConfirmCancelId(null);
-                        setConfirmCompleteId(request.id);
-                      }}
-                      className="btn-primary shrink-0"
-                      disabled={busyId === request.id}
-                    >
-                      <CheckCircle2 className="h-4 w-4" />
-                      Mark Completed
-                    </button>
-                  )}
+                    {request.status === 'pending' && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setError('');
+                          setMessage('');
+                          setConfirmCompleteId(null);
+                          setConfirmCancelId(request.id);
+                        }}
+                        className="btn-secondary"
+                        disabled={busyId === request.id}
+                      >
+                        <XCircle className="h-4 w-4" />
+                        Cancel Request
+                      </button>
+                    )}
+
+                    {request.status === 'accepted' && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setError('');
+                          setMessage('');
+                          setConfirmCancelId(null);
+                          setConfirmCompleteId(request.id);
+                        }}
+                        className="btn-primary"
+                        disabled={busyId === request.id}
+                      >
+                        <CheckCircle2 className="h-4 w-4" />
+                        Mark Completed
+                      </button>
+                    )}
+                  </div>
+                )}
               </div>
             </article>
           ))}

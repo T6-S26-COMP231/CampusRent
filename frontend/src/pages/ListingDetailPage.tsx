@@ -10,7 +10,9 @@ import {
 } from 'lucide-react';
 import { api, assetUrl, Listing, RentalRequest } from '../api/client';
 import { useAuth } from '../context/AuthContext';
+import StartConversationButton from '../components/StartConversationButton';
 import StatusBadge from '../components/StatusBadge';
+import { ConversationTarget } from '../utils/startConversation';
 
 export default function ListingDetailPage() {
   const { id } = useParams();
@@ -80,6 +82,14 @@ export default function ListingDetailPage() {
   if (!listing) return null;
 
   const isOwner = user?.id === listing.owner?.id;
+  const ownerConversationTarget: ConversationTarget | null = listing.owner
+    ? {
+        listingId: listing.id,
+        counterpartId: listing.owner.id,
+        counterpartName: `${listing.owner.first_name} ${listing.owner.last_name}`.trim(),
+        counterpartRole: 'owner',
+      }
+    : null;
 
   return (
     <div className="mx-auto max-w-6xl px-4 py-10 sm:px-6">
@@ -162,6 +172,12 @@ export default function ListingDetailPage() {
                   <Phone className="h-4 w-4" /> {listing.owner.phone}
                 </p>
               )}
+              <StartConversationButton
+                viewerId={user?.id}
+                target={ownerConversationTarget}
+                disabled={submitting}
+                className="mt-4 w-full"
+              />
             </div>
           )}
 

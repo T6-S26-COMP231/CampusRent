@@ -1,9 +1,23 @@
 import { useEffect, useState } from 'react';
 import { CheckCircle2, ClipboardList, XCircle } from 'lucide-react';
 import { api, RentalRequest } from '../api/client';
+import StartConversationButton from '../components/StartConversationButton';
 import StatusBadge from '../components/StatusBadge';
+import { useAuth } from '../context/AuthContext';
+import { ConversationTarget } from '../utils/startConversation';
+
+function renterTargetForRequest(request: RentalRequest): ConversationTarget | null {
+  if (!request.renter) return null;
+  return {
+    listingId: request.listing?.id ?? request.listing_id,
+    counterpartId: request.renter.id,
+    counterpartName: `${request.renter.first_name} ${request.renter.last_name}`.trim(),
+    counterpartRole: 'renter',
+  };
+}
 
 export default function RequestsPage() {
+  const { user } = useAuth();
   const [requests, setRequests] = useState<RentalRequest[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -173,53 +187,59 @@ export default function RequestsPage() {
                   )}
                 </div>
 
-                {request.status === 'pending' &&
-                  confirmDeclineId !== request.id &&
-                  confirmCompleteId !== request.id && (
+                {confirmDeclineId !== request.id && confirmCompleteId !== request.id && (
                   <div className="flex shrink-0 flex-col gap-2 sm:items-stretch">
-                    <button
-                      type="button"
-                      onClick={() => approve(request.id)}
-                      className="btn-primary"
+                    <StartConversationButton
+                      viewerId={user?.id}
+                      target={renterTargetForRequest(request)}
                       disabled={busyId === request.id}
-                    >
-                      <CheckCircle2 className="h-4 w-4" />
-                      {approvingId === request.id ? 'Approving...' : 'Approve Request'}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setError('');
-                        setMessage('');
-                        setConfirmCompleteId(null);
-                        setConfirmDeclineId(request.id);
-                      }}
-                      className="btn-secondary"
-                      disabled={busyId === request.id}
-                    >
-                      <XCircle className="h-4 w-4" />
-                      Decline Request
-                    </button>
-                  </div>
-                )}
+                    />
 
-                {request.status === 'accepted' &&
-                  confirmDeclineId !== request.id &&
-                  confirmCompleteId !== request.id && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setError('');
-                      setMessage('');
-                      setConfirmDeclineId(null);
-                      setConfirmCompleteId(request.id);
-                    }}
-                    className="btn-primary shrink-0"
-                    disabled={busyId === request.id}
-                  >
-                    <CheckCircle2 className="h-4 w-4" />
-                    Mark Completed
-                  </button>
+                    {request.status === 'pending' && (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => approve(request.id)}
+                          className="btn-primary"
+                          disabled={busyId === request.id}
+                        >
+                          <CheckCircle2 className="h-4 w-4" />
+                          {approvingId === request.id ? 'Approving...' : 'Approve Request'}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setError('');
+                            setMessage('');
+                            setConfirmCompleteId(null);
+                            setConfirmDeclineId(request.id);
+                          }}
+                          className="btn-secondary"
+                          disabled={busyId === request.id}
+                        >
+                          <XCircle className="h-4 w-4" />
+                          Decline Request
+                        </button>
+                      </>
+                    )}
+
+                    {request.status === 'accepted' && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setError('');
+                          setMessage('');
+                          setConfirmDeclineId(null);
+                          setConfirmCompleteId(request.id);
+                        }}
+                        className="btn-primary"
+                        disabled={busyId === request.id}
+                      >
+                        <CheckCircle2 className="h-4 w-4" />
+                        Mark Completed
+                      </button>
+                    )}
+                  </div>
                 )}
               </div>
             </article>
