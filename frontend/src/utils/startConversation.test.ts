@@ -25,7 +25,7 @@ const renterTarget: ConversationTarget = {
   counterpartRole: 'renter',
 };
 
-describe('US-16.6 start-conversation frontend helpers', () => {
+describe('US-16.7 start-conversation frontend helpers', () => {
   test('listing-page / my-requests body uses listing id and owner recipient', () => {
     assert.deepEqual(startConversationRequestBody(ownerTarget), {
       listing_id: 11,

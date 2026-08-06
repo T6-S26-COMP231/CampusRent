@@ -30,7 +30,10 @@ async function createStudent(
   email: string,
   firstName: string,
   lastName: string,
-  verificationStatus: 'pending' | 'verified' | 'rejected' = 'verified'
+  options: {
+    verification_status?: 'pending' | 'verified' | 'rejected';
+    status?: 'active' | 'suspended';
+  } = {}
 ) {
   const id = await nextId('users');
   await User.create({
@@ -41,8 +44,8 @@ async function createStudent(
     last_name: lastName,
     phone: '416-555-0100',
     role: 'student',
-    verification_status: verificationStatus,
-    status: 'active',
+    verification_status: options.verification_status ?? 'verified',
+    status: options.status ?? 'active',
   });
   return id;
 }
@@ -113,8 +116,8 @@ after(async () => {
   await stopTestDatabase();
 });
 
-describe('US-16.5 conversation authorization and duplicates', () => {
-  test('prospective renter can start with listing owner', async () => {
+describe('US-16.7 conversation creation, authorization, and duplicates', () => {
+  test('verified renter starts with listing owner and persists normalized participants', async () => {
     const response = await api(baseUrl, 'POST', '/api/conversations', {
       token: tokenFor(renterId, 'renter@mycentennialcollege.ca'),
       body: { listing_id: listingId, recipient_id: ownerId },
@@ -124,9 +127,15 @@ describe('US-16.5 conversation authorization and duplicates', () => {
     assert.equal(response.data.listing_id, listingId);
     assert.ok(response.data.participant_ids.includes(ownerId));
     assert.ok(response.data.participant_ids.includes(renterId));
+
+    const stored = await Conversation.findById(response.data.id).lean();
+    assert.ok(stored);
+    assert.equal(stored.listing_id, listingId);
+    assert.equal(stored.participant_low_id, Math.min(ownerId, renterId));
+    assert.equal(stored.participant_high_id, Math.max(ownerId, renterId));
   });
 
-  test('listing owner can start with a renter who requested that listing', async () => {
+  test('verified owner starts with eligible renter and persists listing context', async () => {
     await createRequest(listingId, renterId);
 
     const response = await api(baseUrl, 'POST', '/api/conversations', {
@@ -138,6 +147,10 @@ describe('US-16.5 conversation authorization and duplicates', () => {
     assert.equal(response.data.listing_id, listingId);
     assert.ok(response.data.participant_ids.includes(ownerId));
     assert.ok(response.data.participant_ids.includes(renterId));
+
+    const stored = await Conversation.findById(response.data.id).lean();
+    assert.ok(stored);
+    assert.equal(stored.listing_id, listingId);
   });
 
   test('listing owner cannot start with an unrelated user', async () => {
@@ -184,12 +197,12 @@ describe('US-16.5 conversation authorization and duplicates', () => {
     assert.match(response.data.error, /yourself/i);
   });
 
-  test('unverified user is rejected', async () => {
+  test('unverified initiator is rejected', async () => {
     const pendingId = await createStudent(
       'pending@mycentennialcollege.ca',
       'Pending',
       'Student',
-      'pending'
+      { verification_status: 'pending' }
     );
 
     const response = await api(baseUrl, 'POST', '/api/conversations', {
@@ -199,6 +212,32 @@ describe('US-16.5 conversation authorization and duplicates', () => {
 
     assert.equal(response.status, 403);
     assert.match(response.data.error, /verification required/i);
+  });
+
+  test('unverified recipient is rejected', async () => {
+    await User.findByIdAndUpdate(ownerId, { verification_status: 'pending' });
+
+    const response = await api(baseUrl, 'POST', '/api/conversations', {
+      token: tokenFor(renterId, 'renter@mycentennialcollege.ca'),
+      body: { listing_id: listingId, recipient_id: ownerId },
+    });
+
+    assert.equal(response.status, 403);
+    assert.match(response.data.error, /verified registered students/i);
+    assert.equal(await Conversation.countDocuments(), 0);
+  });
+
+  test('suspended recipient is rejected', async () => {
+    await User.findByIdAndUpdate(ownerId, { status: 'suspended' });
+
+    const response = await api(baseUrl, 'POST', '/api/conversations', {
+      token: tokenFor(renterId, 'renter@mycentennialcollege.ca'),
+      body: { listing_id: listingId, recipient_id: ownerId },
+    });
+
+    assert.equal(response.status, 403);
+    assert.match(response.data.error, /not available/i);
+    assert.equal(await Conversation.countDocuments(), 0);
   });
 
   test('unrelated third party is rejected', async () => {

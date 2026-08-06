@@ -37,7 +37,7 @@ after(async () => {
   await stopTestDatabase();
 });
 
-describe('US-16.3 Conversation model', () => {
+describe('US-16.7 Conversation model persistence and normalization', () => {
   test('normalizeParticipantIds sorts ids and rejects identical users', () => {
     assert.deepEqual(normalizeParticipantIds(20, 5), {
       participant_low_id: 5,

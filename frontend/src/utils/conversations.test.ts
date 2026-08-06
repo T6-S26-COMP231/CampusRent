@@ -20,7 +20,7 @@ const sample: ConversationListItemLike = {
   updated_at: '2026-08-06T13:00:00.000Z',
 };
 
-describe('US-16.6 conversation list helpers', () => {
+describe('US-16.7 conversation list helpers', () => {
   test('maps counterpart name and listing title', () => {
     assert.equal(conversationCounterpartName(sample), 'Owner Student');
     assert.equal(conversationListingTitle(sample), 'Campus Camera');

@@ -91,8 +91,8 @@ after(async () => {
   await stopTestDatabase();
 });
 
-describe('US-16.6 conversation list API', () => {
-  test('authenticated participant sees their conversations with mapped listing and counterpart', async () => {
+describe('US-16.7 conversation list and participant-only access', () => {
+  test('participant list contains newly created conversation with counterpart and listing enrichment', async () => {
     const created = await api(baseUrl, 'POST', '/api/conversations', {
       token: tokenFor(renterId, 'renter@mycentennialcollege.ca'),
       body: { listing_id: listingId, recipient_id: ownerId },
@@ -169,14 +169,16 @@ describe('US-16.6 conversation list API', () => {
     assert.equal(list.data[1].id, second.data.id);
   });
 
-  test('unauthorized access is denied for list and detail', async () => {
+  test('unauthenticated list access is denied with 401', async () => {
+    const anonList = await api(baseUrl, 'GET', '/api/conversations');
+    assert.equal(anonList.status, 401);
+  });
+
+  test('participant can open conversation detail and unrelated user receives 403', async () => {
     const created = await api(baseUrl, 'POST', '/api/conversations', {
       token: tokenFor(renterId, 'renter@mycentennialcollege.ca'),
       body: { listing_id: listingId, recipient_id: ownerId },
     });
-
-    const anonList = await api(baseUrl, 'GET', '/api/conversations');
-    assert.equal(anonList.status, 401);
 
     const outsiderDetail = await api(baseUrl, 'GET', `/api/conversations/${created.data.id}`, {
       token: tokenFor(outsiderId, 'outsider@mycentennialcollege.ca'),
@@ -188,9 +190,11 @@ describe('US-16.6 conversation list API', () => {
     });
     assert.equal(participantDetail.status, 200);
     assert.equal(participantDetail.data.counterpart.id, renterId);
+    assert.equal(participantDetail.data.listing.title, 'Campus Camera');
+    assert.equal(participantDetail.data.latest_message_preview, null);
   });
 
-  test('missing conversation returns 404 for participants lookup', async () => {
+  test('missing conversation returns 404', async () => {
     const response = await api(baseUrl, 'GET', '/api/conversations/999999', {
       token: tokenFor(renterId, 'renter@mycentennialcollege.ca'),
     });
