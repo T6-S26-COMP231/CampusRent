@@ -9,3 +9,5 @@ backend/uploads/
 .vscode/
 *.log
 *.tsbuildinfo
+.task-time-tracker.json
+.task-time-history.json
