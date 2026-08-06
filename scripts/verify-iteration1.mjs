@@ -42,10 +42,11 @@ check('Frontend administrator route uses admin guard',
 check('Five-image maximum is enforced by backend',
   listingRoutes.includes('const MAX_IMAGES = 5') && listingRoutes.includes('maximum of 5 images'));
 // Route handlers use multiline Express registration after the MongoDB migration.
-// US-14 decline remains intentionally out of Iteration 1 scope.
 check('US-13 renter can see Accepted result without full US-15 dashboard',
-  requestRoutes.includes('/mine/listing/:listingId') &&
-  !requestRoutes.includes('/:id/decline'));
+  requestRoutes.includes('/mine/listing/:listingId'));
+check('US-14 decline endpoint is present for listing owners',
+  requestRoutes.includes('/:id/decline') &&
+  requestRoutes.includes("status = 'declined'"));
 
 const requiredFiles = [
   'frontend/src/pages/RegisterPage.tsx',

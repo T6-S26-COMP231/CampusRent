@@ -59,9 +59,9 @@ router.get(
 );
 
 /**
- * Minimal renter-visible status required by US-13. This is intentionally scoped
- * to one listing and does not implement the full Iteration 2 request-tracking
- * dashboard, cancellation, decline, or completed-rental workflow from US-14/15.
+ * Minimal renter-visible status for a single listing (US-13/US-14).
+ * Does not implement the full Iteration 2 request-tracking dashboard,
+ * cancellation, or completed-rental workflow from US-15.
  */
 router.get(
   '/mine/listing/:listingId',
@@ -173,6 +173,33 @@ router.patch(
     listing.availability = 'unavailable';
     listing.updated_at = new Date();
     await listing.save();
+
+    return res.json(await enrichRequest(request));
+  })
+);
+
+router.patch(
+  '/:id/decline',
+  asyncHandler(async (req, res) => {
+    const requestId = Number(req.params.id);
+    if (!Number.isInteger(requestId) || requestId <= 0) {
+      return res.status(400).json({ error: 'Invalid request id' });
+    }
+
+    const request = await RentalRequest.findById(requestId);
+    if (!request) return res.status(404).json({ error: 'Request not found' });
+    if (request.status !== 'pending') {
+      return res.status(400).json({ error: 'Only pending requests can be declined' });
+    }
+
+    const listing = await Listing.findById(request.listing_id);
+    if (!listing || listing.owner_id !== req.user!.id) {
+      return res.status(403).json({ error: 'Only the listing owner may decline this request' });
+    }
+
+    request.status = 'declined';
+    request.updated_at = new Date();
+    await request.save();
 
     return res.json(await enrichRequest(request));
   })

@@ -196,7 +196,9 @@ export default function ListingDetailPage() {
               <p className="mt-4 text-sm leading-6 text-slate-500">
                 {myRequest.status === 'accepted'
                   ? 'The listing owner accepted this request. The item is now marked Unavailable.'
-                  : 'The request is waiting for the listing owner to review it.'}
+                  : myRequest.status === 'declined'
+                    ? 'The listing owner declined this request. The Declined status has been recorded.'
+                    : 'The request is waiting for the listing owner to review it.'}
               </p>
             </div>
           )}
