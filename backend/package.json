@@ -7,14 +7,18 @@
     "dev": "tsx watch src/index.ts",
     "build": "tsc",
     "start": "node dist/index.js",
-    "seed": "tsx src/seed.ts"
+    "seed": "tsx src/seed.ts",
+    "migrate:store": "tsx scripts/migrate-store-json.ts",
+    "test": "node --import tsx --test --test-concurrency=1 tests/**/*.test.ts"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",
     "campusrent": "file:..",
     "cors": "^2.8.5",
+    "dotenv": "^17.4.2",
     "express": "^4.21.2",
     "jsonwebtoken": "^9.0.2",
+    "mongoose": "^9.9.1",
     "multer": "^1.4.5-lts.1"
   },
   "devDependencies": {
@@ -24,6 +28,7 @@
     "@types/jsonwebtoken": "^9.0.7",
     "@types/multer": "^1.4.12",
     "@types/node": "^22.10.2",
+    "mongodb-memory-server": "^11.2.0",
     "tsx": "^4.19.2",
     "typescript": "^5.7.2"
   }

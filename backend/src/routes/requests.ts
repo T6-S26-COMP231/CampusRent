@@ -1,163 +1,181 @@
 import { Router } from 'express';
-import db from '../db';
 import { authenticate, requireVerifiedStudent } from '../middleware/auth';
+import { nextId } from '../models/Counter';
+import { Listing } from '../models/Listing';
+import { RentalRequest, RentalRequestDoc, toRequestRow } from '../models/RentalRequest';
+import { User } from '../models/User';
+import { asyncHandler } from '../utils/asyncHandler';
 
 const router = Router();
 router.use(authenticate, requireVerifiedStudent);
 
-function enrichRequest(row: Record<string, unknown>) {
-  const listing = db
-    .prepare('SELECT id, title, category, owner_id FROM listings WHERE id = ?')
-    .get(row.listing_id);
-  const renter = db
-    .prepare('SELECT id, first_name, last_name, email, phone FROM users WHERE id = ?')
-    .get(row.renter_id);
-  const owner = listing
-    ? db
-        .prepare('SELECT id, first_name, last_name, email, phone FROM users WHERE id = ?')
-        .get((listing as { owner_id: number }).owner_id)
-    : null;
+async function enrichRequest(request: RentalRequestDoc) {
+  const listing = await Listing.findById(request.listing_id).lean();
+  const renter = await User.findById(request.renter_id).lean();
+  const owner = listing ? await User.findById(listing.owner_id).lean() : null;
 
-  return { ...row, listing, renter, owner };
+  return {
+    ...toRequestRow(request),
+    listing: listing
+      ? {
+          id: listing._id,
+          title: listing.title,
+          category: listing.category,
+          owner_id: listing.owner_id,
+        }
+      : null,
+    renter: renter
+      ? {
+          id: renter._id,
+          first_name: renter.first_name,
+          last_name: renter.last_name,
+          email: renter.email,
+          phone: renter.phone,
+        }
+      : null,
+    owner: owner
+      ? {
+          id: owner._id,
+          first_name: owner.first_name,
+          last_name: owner.last_name,
+          email: owner.email,
+          phone: owner.phone,
+        }
+      : null,
+  };
 }
 
-router.get('/incoming', (req, res) => {
-  const requests = db
-    .prepare(
-      `SELECT rr.* FROM rental_requests rr
-       JOIN listings l ON l.id = rr.listing_id
-       WHERE l.owner_id = ? ORDER BY rr.created_at DESC`
-    )
-    .all(req.user!.id);
+router.get(
+  '/incoming',
+  asyncHandler(async (req, res) => {
+    const ownedListings = await Listing.find({ owner_id: req.user!.id }).select('_id').lean();
+    const listingIds = ownedListings.map((listing) => listing._id);
+    const requests = await RentalRequest.find({ listing_id: { $in: listingIds } }).sort({
+      created_at: -1,
+    });
 
-  return res.json(
-    requests.map((request) => enrichRequest(request as Record<string, unknown>))
-  );
-});
+    return res.json(await Promise.all(requests.map((request) => enrichRequest(request))));
+  })
+);
 
 /**
  * Minimal renter-visible status required by US-13. This is intentionally scoped
  * to one listing and does not implement the full Iteration 2 request-tracking
  * dashboard, cancellation, decline, or completed-rental workflow from US-14/15.
  */
-router.get('/mine/listing/:listingId', (req, res) => {
-  const listingId = Number(req.params.listingId);
-  if (!Number.isInteger(listingId) || listingId <= 0) {
-    return res.status(400).json({ error: 'Invalid listing id' });
-  }
+router.get(
+  '/mine/listing/:listingId',
+  asyncHandler(async (req, res) => {
+    const listingId = Number(req.params.listingId);
+    if (!Number.isInteger(listingId) || listingId <= 0) {
+      return res.status(400).json({ error: 'Invalid listing id' });
+    }
 
-  const request = db
-    .prepare(
-      'SELECT * FROM rental_requests WHERE listing_id = ? AND renter_id = ? ORDER BY created_at DESC'
-    )
-    .get(listingId, req.user!.id);
+    const request = await RentalRequest.findOne({
+      listing_id: listingId,
+      renter_id: req.user!.id,
+    }).sort({ created_at: -1 });
 
-  return res.json(request ? enrichRequest(request as Record<string, unknown>) : null);
-});
+    return res.json(request ? await enrichRequest(request) : null);
+  })
+);
 
-router.post('/', (req, res) => {
-  const { listing_id, start_date, end_date } = req.body as {
-    listing_id?: number;
-    start_date?: string;
-    end_date?: string;
-  };
+router.post(
+  '/',
+  asyncHandler(async (req, res) => {
+    const { listing_id, start_date, end_date } = req.body as {
+      listing_id?: number;
+      start_date?: string;
+      end_date?: string;
+    };
 
-  const listingId = Number(listing_id);
-  if (!Number.isInteger(listingId) || listingId <= 0 || !start_date || !end_date) {
-    return res
-      .status(400)
-      .json({ error: 'Listing, start date, and end date are required' });
-  }
+    const listingId = Number(listing_id);
+    if (!Number.isInteger(listingId) || listingId <= 0 || !start_date || !end_date) {
+      return res
+        .status(400)
+        .json({ error: 'Listing, start date, and end date are required' });
+    }
 
-  const start = new Date(`${start_date}T00:00:00`);
-  const end = new Date(`${end_date}T00:00:00`);
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
+    const start = new Date(`${start_date}T00:00:00`);
+    const end = new Date(`${end_date}T00:00:00`);
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
 
-  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) {
-    return res.status(400).json({ error: 'Rental dates are invalid' });
-  }
-  if (start < today) {
-    return res.status(400).json({ error: 'Start date cannot be in the past' });
-  }
-  if (end <= start) {
-    return res.status(400).json({ error: 'End date must be after the start date' });
-  }
+    if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) {
+      return res.status(400).json({ error: 'Rental dates are invalid' });
+    }
+    if (start < today) {
+      return res.status(400).json({ error: 'Start date cannot be in the past' });
+    }
+    if (end <= start) {
+      return res.status(400).json({ error: 'End date must be after the start date' });
+    }
 
-  const listing = db.prepare('SELECT * FROM listings WHERE id = ?').get(listingId) as
-    | { id: number; owner_id: number; availability: string }
-    | undefined;
+    const listing = await Listing.findById(listingId);
+    if (!listing) return res.status(404).json({ error: 'Listing not found' });
+    if (listing.availability !== 'available') {
+      return res.status(400).json({ error: 'This item is not available for rental' });
+    }
+    if (listing.owner_id === req.user!.id) {
+      return res.status(400).json({ error: 'You cannot request your own listing' });
+    }
 
-  if (!listing) return res.status(404).json({ error: 'Listing not found' });
-  if (listing.availability !== 'available') {
-    return res.status(400).json({ error: 'This item is not available for rental' });
-  }
-  if (listing.owner_id === req.user!.id) {
-    return res.status(400).json({ error: 'You cannot request your own listing' });
-  }
+    const existing = await RentalRequest.findOne({
+      listing_id: listingId,
+      renter_id: req.user!.id,
+      status: 'pending',
+    }).lean();
+    if (existing) {
+      return res
+        .status(409)
+        .json({ error: 'You already have a pending request for this listing' });
+    }
 
-  const existing = db
-    .prepare(
-      `SELECT id FROM rental_requests
-       WHERE listing_id = ? AND renter_id = ? AND status = 'pending'`
-    )
-    .get(listingId, req.user!.id);
-  if (existing) {
-    return res
-      .status(409)
-      .json({ error: 'You already have a pending request for this listing' });
-  }
+    const request = await RentalRequest.create({
+      _id: await nextId('rental_requests'),
+      listing_id: listingId,
+      renter_id: req.user!.id,
+      start_date,
+      end_date,
+      status: 'pending',
+    });
 
-  const result = db
-    .prepare(
-      `INSERT INTO rental_requests (listing_id, renter_id, start_date, end_date)
-       VALUES (?, ?, ?, ?)`
-    )
-    .run(listingId, req.user!.id, start_date, end_date);
+    return res.status(201).json(await enrichRequest(request));
+  })
+);
 
-  const request = db
-    .prepare('SELECT * FROM rental_requests WHERE id = ?')
-    .get(result.lastInsertRowid);
-  return res.status(201).json(enrichRequest(request as Record<string, unknown>));
-});
+router.patch(
+  '/:id/approve',
+  asyncHandler(async (req, res) => {
+    const requestId = Number(req.params.id);
+    if (!Number.isInteger(requestId) || requestId <= 0) {
+      return res.status(400).json({ error: 'Invalid request id' });
+    }
 
-router.patch('/:id/approve', (req, res) => {
-  const requestId = Number(req.params.id);
-  if (!Number.isInteger(requestId) || requestId <= 0) {
-    return res.status(400).json({ error: 'Invalid request id' });
-  }
+    const request = await RentalRequest.findById(requestId);
+    if (!request) return res.status(404).json({ error: 'Request not found' });
+    if (request.status !== 'pending') {
+      return res.status(400).json({ error: 'Only pending requests can be approved' });
+    }
 
-  const request = db.prepare('SELECT * FROM rental_requests WHERE id = ?').get(requestId) as
-    | { id: number; listing_id: number; status: string }
-    | undefined;
+    const listing = await Listing.findById(request.listing_id);
+    if (!listing || listing.owner_id !== req.user!.id) {
+      return res.status(403).json({ error: 'Only the listing owner may approve this request' });
+    }
+    if (listing.availability !== 'available') {
+      return res.status(400).json({ error: 'The item is no longer available' });
+    }
 
-  if (!request) return res.status(404).json({ error: 'Request not found' });
-  if (request.status !== 'pending') {
-    return res.status(400).json({ error: 'Only pending requests can be approved' });
-  }
+    request.status = 'accepted';
+    request.updated_at = new Date();
+    await request.save();
 
-  const listing = db
-    .prepare('SELECT owner_id, availability FROM listings WHERE id = ?')
-    .get(request.listing_id) as
-    | { owner_id: number; availability: string }
-    | undefined;
+    listing.availability = 'unavailable';
+    listing.updated_at = new Date();
+    await listing.save();
 
-  if (!listing || listing.owner_id !== req.user!.id) {
-    return res.status(403).json({ error: 'Only the listing owner may approve this request' });
-  }
-  if (listing.availability !== 'available') {
-    return res.status(400).json({ error: 'The item is no longer available' });
-  }
-
-  db.prepare(
-    `UPDATE rental_requests SET status = 'accepted', updated_at = datetime('now') WHERE id = ?`
-  ).run(request.id);
-  db.prepare(
-    `UPDATE listings SET availability = ?, updated_at = datetime('now') WHERE id = ?`
-  ).run('unavailable', request.listing_id);
-
-  const updated = db.prepare('SELECT * FROM rental_requests WHERE id = ?').get(request.id);
-  return res.json(enrichRequest(updated as Record<string, unknown>));
-});
+    return res.json(await enrichRequest(request));
+  })
+);
 
 export default router;

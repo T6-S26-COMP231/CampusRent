@@ -1,9 +1,13 @@
-import { Router } from 'express';
+import express, { Router } from 'express';
 import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
-import db from '../db';
 import { authenticate, requireVerifiedStudent } from '../middleware/auth';
+import { nextId } from '../models/Counter';
+import { Listing, ListingDoc, toListingRow } from '../models/Listing';
+import { RentalRequest } from '../models/RentalRequest';
+import { User } from '../models/User';
+import { asyncHandler } from '../utils/asyncHandler';
 import {
   isValidAvailability,
   isValidCategory,
@@ -42,7 +46,14 @@ const upload = multer({
 
 // Accept enough files to return a clear validation message for the six-image test.
 // The handler still enforces the Iteration 1 maximum of five images.
-const receiveListingImages = upload.array('images', 10);
+// JSON-only requests (no multipart body) skip multer so express.json() fields remain available.
+const receiveListingImages: express.RequestHandler = (req, res, next) => {
+  const contentType = String(req.headers['content-type'] || '');
+  if (!contentType.includes('multipart/form-data')) {
+    return next();
+  }
+  return upload.array('images', 10)(req, res, next);
+};
 
 function uploadedFiles(req: Express.Request): Express.Multer.File[] {
   return (req.files as Express.Multer.File[] | undefined) || [];
@@ -55,26 +66,15 @@ function removeFiles(files: Express.Multer.File[]) {
   }
 }
 
-function getListingImages(listingId: number): { id: number; filename: string }[] {
-  return db
-    .prepare('SELECT id, filename FROM listing_images WHERE listing_id = ? ORDER BY id')
-    .all(listingId) as { id: number; filename: string }[];
-}
-
-function formatListing(listing: Record<string, unknown>) {
-  const images = getListingImages(listing.id as number);
-  const owner = db
-    .prepare('SELECT id, first_name, last_name, email, phone FROM users WHERE id = ?')
-    .get(listing.owner_id as number) as
-    | { id: number; first_name: string; last_name: string; email: string; phone: string }
-    | undefined;
+async function formatListing(listing: ListingDoc) {
+  const owner = await User.findById(listing.owner_id).lean();
 
   return {
-    ...listing,
-    images: images.map((image) => ({ url: `/uploads/${image.filename}` })),
+    ...toListingRow(listing),
+    images: listing.images.map((image) => ({ url: `/uploads/${image.filename}` })),
     owner: owner
       ? {
-          id: owner.id,
+          id: owner._id,
           first_name: owner.first_name,
           last_name: owner.last_name,
           email: owner.email,
@@ -94,256 +94,283 @@ router.get('/categories', (_req, res) => {
   res.json(LISTING_CATEGORIES);
 });
 
-router.get('/', (req, res) => {
-  const { q, category, availability = 'available', page = '1', limit = '6' } = req.query;
+router.get(
+  '/',
+  asyncHandler(async (req, res) => {
+    const { q, category, availability = 'available', page = '1', limit = '6' } = req.query;
 
-  let sql = 'SELECT l.* FROM listings l WHERE 1=1';
-  const params: unknown[] = [];
-
-  if (q && typeof q === 'string' && q.trim()) {
-    sql += ' AND (l.title LIKE ? OR l.description LIKE ?)';
-    const term = `%${q.trim()}%`;
-    params.push(term, term);
-  }
-
-  if (category && typeof category === 'string') {
-    if (!isValidCategory(category)) {
-      return res.status(400).json({ error: 'Invalid category filter' });
+    if (typeof availability !== 'string' || !isValidAvailability(availability)) {
+      return res.status(400).json({ error: 'Availability must be available or unavailable' });
     }
-    sql += ' AND l.category = ?';
-    params.push(category);
-  }
 
-  if (typeof availability !== 'string' || !isValidAvailability(availability)) {
-    return res.status(400).json({ error: 'Availability must be available or unavailable' });
-  }
-  sql += ' AND l.availability = ?';
-  params.push(availability);
+    const filter: Record<string, unknown> = { availability };
 
-  const countSql = sql.replace('SELECT l.*', 'SELECT COUNT(*) as total');
-  const total = (db.prepare(countSql).get(...params) as { total: number }).total;
-
-  const pageNum = Math.max(1, Number.parseInt(String(page), 10) || 1);
-  const limitNum = Math.min(24, Math.max(1, Number.parseInt(String(limit), 10) || 6));
-  sql += ' ORDER BY l.created_at DESC LIMIT ? OFFSET ?';
-  params.push(limitNum, (pageNum - 1) * limitNum);
-
-  const listings = db.prepare(sql).all(...params);
-  res.json({
-    listings: listings.map((listing) => formatListing(listing as Record<string, unknown>)),
-    pagination: {
-      page: pageNum,
-      limit: limitNum,
-      total,
-      pages: Math.max(1, Math.ceil(total / limitNum)),
-    },
-  });
-});
-
-router.get('/mine', (req, res) => {
-  const listings = db
-    .prepare('SELECT * FROM listings WHERE owner_id = ? ORDER BY created_at DESC')
-    .all(req.user!.id);
-
-  res.json(listings.map((listing) => formatListing(listing as Record<string, unknown>)));
-});
-
-router.get('/:id', (req, res) => {
-  const listing = db.prepare('SELECT * FROM listings WHERE id = ?').get(req.params.id);
-  if (!listing) return res.status(404).json({ error: 'Listing not found' });
-  return res.json(formatListing(listing as Record<string, unknown>));
-});
-
-router.post('/', receiveListingImages, (req, res) => {
-  const files = uploadedFiles(req);
-  const { title, category, description, rental_terms, availability } = req.body as {
-    title?: string;
-    category?: string;
-    description?: string;
-    rental_terms?: string;
-    availability?: string;
-  };
-
-  if (files.length > MAX_IMAGES) {
-    removeFiles(files);
-    return res.status(400).json({ error: 'A listing can contain a maximum of 5 images' });
-  }
-  if (typeof title !== 'string' || !title.trim()) {
-    removeFiles(files);
-    return res.status(400).json({ error: 'Title is required' });
-  }
-  if (typeof category !== 'string' || !isValidCategory(category)) {
-    removeFiles(files);
-    return res.status(400).json({ error: 'Valid category is required' });
-  }
-  if (typeof description !== 'string' || !description.trim()) {
-    removeFiles(files);
-    return res.status(400).json({ error: 'Description is required' });
-  }
-  if (typeof availability !== 'string' || !isValidAvailability(availability)) {
-    removeFiles(files);
-    return res.status(400).json({ error: 'Availability is required' });
-  }
-
-  const result = db
-    .prepare(
-      `INSERT INTO listings (owner_id, title, category, description, rental_terms, availability)
-       VALUES (?, ?, ?, ?, ?, ?)`
-    )
-    .run(
-      req.user!.id,
-      title.trim(),
-      category,
-      description.trim(),
-      typeof rental_terms === 'string' ? rental_terms.trim() : '',
-      availability
-    );
-
-  const listingId = result.lastInsertRowid as number;
-  if (files.length) {
-    const insertImage = db.prepare(
-      'INSERT INTO listing_images (listing_id, filename) VALUES (?, ?)'
-    );
-    for (const file of files) insertImage.run(listingId, file.filename);
-  }
-
-  const listing = db.prepare('SELECT * FROM listings WHERE id = ?').get(listingId);
-  return res.status(201).json(formatListing(listing as Record<string, unknown>));
-});
-
-router.put('/:id', receiveListingImages, (req, res) => {
-  const files = uploadedFiles(req);
-  const listing = db.prepare('SELECT * FROM listings WHERE id = ?').get(req.params.id) as
-    | { id: number; owner_id: number }
-    | undefined;
-
-  if (!listing) {
-    removeFiles(files);
-    return res.status(404).json({ error: 'Listing not found' });
-  }
-  if (listing.owner_id !== req.user!.id) {
-    removeFiles(files);
-    return res.status(403).json({ error: 'Only listing owners may edit listings' });
-  }
-
-  const { title, category, description, rental_terms } = req.body as {
-    title?: string;
-    category?: string;
-    description?: string;
-    rental_terms?: string;
-  };
-
-  if (typeof title !== 'string' || !title.trim()) {
-    removeFiles(files);
-    return res.status(400).json({ error: 'Title is required' });
-  }
-  if (typeof category !== 'string' || !isValidCategory(category)) {
-    removeFiles(files);
-    return res.status(400).json({ error: 'Valid category is required' });
-  }
-  if (typeof description !== 'string' || !description.trim()) {
-    removeFiles(files);
-    return res.status(400).json({ error: 'Description is required' });
-  }
-
-  const currentCount = (
-    db.prepare('SELECT COUNT(*) as c FROM listing_images WHERE listing_id = ?').get(listing.id) as {
-      c: number;
+    if (q && typeof q === 'string' && q.trim()) {
+      const term = q.trim();
+      filter.$or = [
+        { title: { $regex: term, $options: 'i' } },
+        { description: { $regex: term, $options: 'i' } },
+      ];
     }
-  ).c;
-  if (currentCount + files.length > MAX_IMAGES) {
-    removeFiles(files);
-    return res.status(400).json({ error: 'A listing can contain a maximum of 5 images' });
-  }
 
-  db.prepare(
-    `UPDATE listings SET title = ?, category = ?, description = ?,
-     rental_terms = ?, updated_at = datetime('now') WHERE id = ?`
-  ).run(
-    title.trim(),
-    category,
-    description.trim(),
-    typeof rental_terms === 'string' ? rental_terms.trim() : '',
-    listing.id
-  );
+    if (category && typeof category === 'string') {
+      if (!isValidCategory(category)) {
+        return res.status(400).json({ error: 'Invalid category filter' });
+      }
+      filter.category = category;
+    }
 
-  if (files.length) {
-    const insertImage = db.prepare(
-      'INSERT INTO listing_images (listing_id, filename) VALUES (?, ?)'
-    );
-    for (const file of files) insertImage.run(listing.id, file.filename);
-  }
+    const pageNum = Math.max(1, Number.parseInt(String(page), 10) || 1);
+    const limitNum = Math.min(24, Math.max(1, Number.parseInt(String(limit), 10) || 6));
+    const total = await Listing.countDocuments(filter);
+    const listings = await Listing.find(filter)
+      .sort({ created_at: -1 })
+      .skip((pageNum - 1) * limitNum)
+      .limit(limitNum);
 
-  const updated = db.prepare('SELECT * FROM listings WHERE id = ?').get(listing.id);
-  return res.json(formatListing(updated as Record<string, unknown>));
-});
+    return res.json({
+      listings: await Promise.all(listings.map((listing) => formatListing(listing))),
+      pagination: {
+        page: pageNum,
+        limit: limitNum,
+        total,
+        pages: Math.max(1, Math.ceil(total / limitNum)),
+      },
+    });
+  })
+);
 
-router.patch('/:id/availability', (req, res) => {
-  const listing = db.prepare('SELECT * FROM listings WHERE id = ?').get(req.params.id) as
-    | { id: number; owner_id: number }
-    | undefined;
+router.get(
+  '/mine',
+  asyncHandler(async (req, res) => {
+    const listings = await Listing.find({ owner_id: req.user!.id }).sort({ created_at: -1 });
+    return res.json(await Promise.all(listings.map((listing) => formatListing(listing))));
+  })
+);
 
-  if (!listing) return res.status(404).json({ error: 'Listing not found' });
-  if (listing.owner_id !== req.user!.id) {
-    return res.status(403).json({ error: 'Only listing owners may update availability' });
-  }
+router.get(
+  '/:id',
+  asyncHandler(async (req, res) => {
+    const listingId = Number(req.params.id);
+    if (!Number.isInteger(listingId) || listingId <= 0) {
+      return res.status(400).json({ error: 'Invalid listing id' });
+    }
 
-  const { availability } = req.body as { availability?: string };
-  if (typeof availability !== 'string' || !isValidAvailability(availability)) {
-    return res.status(400).json({ error: 'Availability must be available or unavailable' });
-  }
+    const listing = await Listing.findById(listingId);
+    if (!listing) return res.status(404).json({ error: 'Listing not found' });
+    return res.json(await formatListing(listing));
+  })
+);
 
-  db.prepare(
-    `UPDATE listings SET availability = ?, updated_at = datetime('now') WHERE id = ?`
-  ).run(availability, listing.id);
+router.post(
+  '/',
+  receiveListingImages,
+  asyncHandler(async (req, res) => {
+    const files = uploadedFiles(req);
+    const { title, category, description, rental_terms, availability } = req.body as {
+      title?: string;
+      category?: string;
+      description?: string;
+      rental_terms?: string;
+      availability?: string;
+    };
 
-  const updated = db.prepare('SELECT * FROM listings WHERE id = ?').get(listing.id);
-  return res.json(formatListing(updated as Record<string, unknown>));
-});
+    if (files.length > MAX_IMAGES) {
+      removeFiles(files);
+      return res.status(400).json({ error: 'A listing can contain a maximum of 5 images' });
+    }
+    if (typeof title !== 'string' || !title.trim()) {
+      removeFiles(files);
+      return res.status(400).json({ error: 'Title is required' });
+    }
+    if (typeof category !== 'string' || !isValidCategory(category)) {
+      removeFiles(files);
+      return res.status(400).json({ error: 'Valid category is required' });
+    }
+    if (typeof description !== 'string' || !description.trim()) {
+      removeFiles(files);
+      return res.status(400).json({ error: 'Description is required' });
+    }
+    if (typeof availability !== 'string' || !isValidAvailability(availability)) {
+      removeFiles(files);
+      return res.status(400).json({ error: 'Availability is required' });
+    }
 
-router.delete('/:id/images/:filename', (req, res) => {
-  const listing = db.prepare('SELECT * FROM listings WHERE id = ?').get(req.params.id) as
-    | { id: number; owner_id: number }
-    | undefined;
+    try {
+      const listingId = await nextId('listings');
+      const images = [];
+      for (const file of files) {
+        images.push({ id: await nextId('listing_images'), filename: file.filename });
+      }
 
-  if (!listing) return res.status(404).json({ error: 'Listing not found' });
-  if (listing.owner_id !== req.user!.id) {
-    return res.status(403).json({ error: 'Only listing owners may remove images' });
-  }
+      const listing = await Listing.create({
+        _id: listingId,
+        owner_id: req.user!.id,
+        title: title.trim(),
+        category,
+        description: description.trim(),
+        rental_terms: typeof rental_terms === 'string' ? rental_terms.trim() : '',
+        availability,
+        images,
+      });
 
-  const filename = path.basename(req.params.filename);
-  const image = db
-    .prepare('SELECT id, filename FROM listing_images WHERE listing_id = ? AND filename = ?')
-    .get(listing.id, filename) as { id: number; filename: string } | undefined;
+      return res.status(201).json(await formatListing(listing));
+    } catch (error) {
+      removeFiles(files);
+      throw error;
+    }
+  })
+);
 
-  if (!image) return res.status(404).json({ error: 'Image not found' });
+router.put(
+  '/:id',
+  receiveListingImages,
+  asyncHandler(async (req, res) => {
+    const files = uploadedFiles(req);
+    const listingId = Number(req.params.id);
+    if (!Number.isInteger(listingId) || listingId <= 0) {
+      removeFiles(files);
+      return res.status(400).json({ error: 'Invalid listing id' });
+    }
 
-  const filePath = path.join(uploadsDir, image.filename);
-  if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
-  db.prepare('DELETE FROM listing_images WHERE id = ?').run(image.id);
-  return res.json({ message: 'Image removed successfully' });
-});
+    const listing = await Listing.findById(listingId);
+    if (!listing) {
+      removeFiles(files);
+      return res.status(404).json({ error: 'Listing not found' });
+    }
+    if (listing.owner_id !== req.user!.id) {
+      removeFiles(files);
+      return res.status(403).json({ error: 'Only listing owners may edit listings' });
+    }
 
-router.delete('/:id', (req, res) => {
-  const listing = db.prepare('SELECT * FROM listings WHERE id = ?').get(req.params.id) as
-    | { id: number; owner_id: number }
-    | undefined;
+    const { title, category, description, rental_terms } = req.body as {
+      title?: string;
+      category?: string;
+      description?: string;
+      rental_terms?: string;
+    };
 
-  if (!listing) return res.status(404).json({ error: 'Listing not found' });
-  if (listing.owner_id !== req.user!.id) {
-    return res.status(403).json({ error: 'Only listing owners may remove listings' });
-  }
+    if (typeof title !== 'string' || !title.trim()) {
+      removeFiles(files);
+      return res.status(400).json({ error: 'Title is required' });
+    }
+    if (typeof category !== 'string' || !isValidCategory(category)) {
+      removeFiles(files);
+      return res.status(400).json({ error: 'Valid category is required' });
+    }
+    if (typeof description !== 'string' || !description.trim()) {
+      removeFiles(files);
+      return res.status(400).json({ error: 'Description is required' });
+    }
 
-  const images = db
-    .prepare('SELECT filename FROM listing_images WHERE listing_id = ?')
-    .all(listing.id) as { filename: string }[];
-  for (const image of images) {
+    if (listing.images.length + files.length > MAX_IMAGES) {
+      removeFiles(files);
+      return res.status(400).json({ error: 'A listing can contain a maximum of 5 images' });
+    }
+
+    try {
+      listing.title = title.trim();
+      listing.category = category;
+      listing.description = description.trim();
+      listing.rental_terms = typeof rental_terms === 'string' ? rental_terms.trim() : '';
+      listing.updated_at = new Date();
+
+      for (const file of files) {
+        listing.images.push({ id: await nextId('listing_images'), filename: file.filename });
+      }
+
+      await listing.save();
+      return res.json(await formatListing(listing));
+    } catch (error) {
+      removeFiles(files);
+      throw error;
+    }
+  })
+);
+
+router.patch(
+  '/:id/availability',
+  asyncHandler(async (req, res) => {
+    const listingId = Number(req.params.id);
+    if (!Number.isInteger(listingId) || listingId <= 0) {
+      return res.status(400).json({ error: 'Invalid listing id' });
+    }
+
+    const listing = await Listing.findById(listingId);
+    if (!listing) return res.status(404).json({ error: 'Listing not found' });
+    if (listing.owner_id !== req.user!.id) {
+      return res.status(403).json({ error: 'Only listing owners may update availability' });
+    }
+
+    const { availability } = req.body as { availability?: string };
+    if (typeof availability !== 'string' || !isValidAvailability(availability)) {
+      return res.status(400).json({ error: 'Availability must be available or unavailable' });
+    }
+
+    listing.availability = availability;
+    listing.updated_at = new Date();
+    await listing.save();
+
+    return res.json(await formatListing(listing));
+  })
+);
+
+router.delete(
+  '/:id/images/:filename',
+  asyncHandler(async (req, res) => {
+    const listingId = Number(req.params.id);
+    if (!Number.isInteger(listingId) || listingId <= 0) {
+      return res.status(400).json({ error: 'Invalid listing id' });
+    }
+
+    const listing = await Listing.findById(listingId);
+    if (!listing) return res.status(404).json({ error: 'Listing not found' });
+    if (listing.owner_id !== req.user!.id) {
+      return res.status(403).json({ error: 'Only listing owners may remove images' });
+    }
+
+    const rawFilename = req.params.filename;
+    const filename = path.basename(Array.isArray(rawFilename) ? rawFilename[0] : rawFilename);
+    const image = listing.images.find((item: { filename: string }) => item.filename === filename);
+    if (!image) return res.status(404).json({ error: 'Image not found' });
+
     const filePath = path.join(uploadsDir, image.filename);
     if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
-  }
 
-  db.prepare('DELETE FROM listings WHERE id = ?').run(listing.id);
-  return res.json({ message: 'Listing removed successfully' });
-});
+    listing.images = listing.images.filter(
+      (item: { filename: string }) => item.filename !== filename
+    );
+    listing.updated_at = new Date();
+    await listing.save();
+
+    return res.json({ message: 'Image removed successfully' });
+  })
+);
+
+router.delete(
+  '/:id',
+  asyncHandler(async (req, res) => {
+    const listingId = Number(req.params.id);
+    if (!Number.isInteger(listingId) || listingId <= 0) {
+      return res.status(400).json({ error: 'Invalid listing id' });
+    }
+
+    const listing = await Listing.findById(listingId);
+    if (!listing) return res.status(404).json({ error: 'Listing not found' });
+    if (listing.owner_id !== req.user!.id) {
+      return res.status(403).json({ error: 'Only listing owners may remove listings' });
+    }
+
+    for (const image of listing.images) {
+      const filePath = path.join(uploadsDir, image.filename);
+      if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+    }
+
+    await RentalRequest.deleteMany({ listing_id: listing._id });
+    await listing.deleteOne();
+
+    return res.json({ message: 'Listing removed successfully' });
+  })
+);
 
 export default router;
