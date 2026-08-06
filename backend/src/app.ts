@@ -6,6 +6,7 @@ import mongoose from 'mongoose';
 import authRoutes from './routes/auth';
 import listingRoutes from './routes/listings';
 import requestRoutes from './routes/requests';
+import conversationRoutes from './routes/conversations';
 import adminRoutes from './routes/admin';
 import { getDatabaseStatus } from './db/connection';
 
@@ -47,6 +48,7 @@ export function createApp() {
   app.use('/api/auth', authRoutes);
   app.use('/api/listings', listingRoutes);
   app.use('/api/requests', requestRoutes);
+  app.use('/api/conversations', conversationRoutes);
   app.use('/api/admin', adminRoutes);
 
   app.use((_req, res) => {
