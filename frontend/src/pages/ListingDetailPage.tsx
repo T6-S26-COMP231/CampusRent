@@ -198,8 +198,18 @@ export default function ListingDetailPage() {
                   ? 'The listing owner accepted this request. The item is now marked Unavailable.'
                   : myRequest.status === 'declined'
                     ? 'The listing owner declined this request. The Declined status has been recorded.'
-                    : 'The request is waiting for the listing owner to review it.'}
+                    : myRequest.status === 'cancelled'
+                      ? 'You cancelled this request. The Cancelled status has been recorded.'
+                      : myRequest.status === 'completed'
+                        ? 'This rental is Completed. Track all of your requests from My Requests.'
+                        : 'The request is waiting for the listing owner to review it.'}
               </p>
+              <Link
+                to="/my-requests"
+                className="mt-4 inline-flex text-sm font-semibold text-campus-700 hover:text-campus-900"
+              >
+                Open My Requests dashboard
+              </Link>
             </div>
           )}
 

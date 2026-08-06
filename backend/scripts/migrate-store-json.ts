@@ -147,7 +147,13 @@ async function migrate() {
 
   for (const request of store.rental_requests || []) {
     maxRequestId = Math.max(maxRequestId, request.id);
-    if (request.status !== 'pending' && request.status !== 'accepted') {
+    if (
+      request.status !== 'pending' &&
+      request.status !== 'accepted' &&
+      request.status !== 'declined' &&
+      request.status !== 'cancelled' &&
+      request.status !== 'completed'
+    ) {
       console.log(`Skipped rental request id=${request.id}: unsupported status "${request.status}"`);
       continue;
     }

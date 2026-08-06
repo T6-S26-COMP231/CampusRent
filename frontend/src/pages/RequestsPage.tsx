@@ -10,7 +10,9 @@ export default function RequestsPage() {
   const [message, setMessage] = useState('');
   const [approvingId, setApprovingId] = useState<number | null>(null);
   const [decliningId, setDecliningId] = useState<number | null>(null);
+  const [completingId, setCompletingId] = useState<number | null>(null);
   const [confirmDeclineId, setConfirmDeclineId] = useState<number | null>(null);
+  const [confirmCompleteId, setConfirmCompleteId] = useState<number | null>(null);
 
   const loadRequests = () => {
     setLoading(true);
@@ -26,6 +28,7 @@ export default function RequestsPage() {
     setError('');
     setMessage('');
     setConfirmDeclineId(null);
+    setConfirmCompleteId(null);
     setApprovingId(requestId);
     try {
       await api.patch(`/requests/${requestId}/approve`);
@@ -54,7 +57,23 @@ export default function RequestsPage() {
     }
   };
 
-  const busyId = approvingId ?? decliningId;
+  const completeRequest = async (requestId: number) => {
+    setError('');
+    setMessage('');
+    setCompletingId(requestId);
+    try {
+      await api.patch(`/requests/${requestId}/complete`);
+      setMessage('Rental marked Completed. The item is available again for new requests.');
+      setConfirmCompleteId(null);
+      loadRequests();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unable to complete rental');
+    } finally {
+      setCompletingId(null);
+    }
+  };
+
+  const busyId = approvingId ?? decliningId ?? completingId;
 
   return (
     <div className="mx-auto max-w-5xl px-4 py-10 sm:px-6">
@@ -62,7 +81,7 @@ export default function RequestsPage() {
         <p className="text-sm font-semibold uppercase tracking-[0.2em] text-campus-600">Rental coordination</p>
         <h1 className="mt-2 font-display text-3xl font-extrabold text-slate-950">Incoming rental requests</h1>
         <p className="mt-2 text-slate-500">
-          Review requests made for listings that you own. Approve available rentals or decline requests you cannot fulfill.
+          Review requests for listings you own. Approve, decline, or mark accepted rentals as completed.
         </p>
       </div>
 
@@ -124,9 +143,39 @@ export default function RequestsPage() {
                       </div>
                     </div>
                   )}
+
+                  {confirmCompleteId === request.id && (
+                    <div className="mt-4 rounded-xl border border-sky-200 bg-sky-50 p-4 text-sm text-sky-900">
+                      <p className="font-semibold">Mark this rental as Completed?</p>
+                      <p className="mt-1 text-sky-800">
+                        Confirm when the item has been returned. The listing becomes Available again.
+                      </p>
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          onClick={() => completeRequest(request.id)}
+                          className="btn-primary"
+                          disabled={completingId === request.id}
+                        >
+                          <CheckCircle2 className="h-4 w-4" />
+                          {completingId === request.id ? 'Completing...' : 'Confirm Complete'}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setConfirmCompleteId(null)}
+                          className="btn-secondary"
+                          disabled={completingId === request.id}
+                        >
+                          Not Yet
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </div>
 
-                {request.status === 'pending' && confirmDeclineId !== request.id && (
+                {request.status === 'pending' &&
+                  confirmDeclineId !== request.id &&
+                  confirmCompleteId !== request.id && (
                   <div className="flex shrink-0 flex-col gap-2 sm:items-stretch">
                     <button
                       type="button"
@@ -142,6 +191,7 @@ export default function RequestsPage() {
                       onClick={() => {
                         setError('');
                         setMessage('');
+                        setConfirmCompleteId(null);
                         setConfirmDeclineId(request.id);
                       }}
                       className="btn-secondary"
@@ -151,6 +201,25 @@ export default function RequestsPage() {
                       Decline Request
                     </button>
                   </div>
+                )}
+
+                {request.status === 'accepted' &&
+                  confirmDeclineId !== request.id &&
+                  confirmCompleteId !== request.id && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setError('');
+                      setMessage('');
+                      setConfirmDeclineId(null);
+                      setConfirmCompleteId(request.id);
+                    }}
+                    className="btn-primary shrink-0"
+                    disabled={busyId === request.id}
+                  >
+                    <CheckCircle2 className="h-4 w-4" />
+                    Mark Completed
+                  </button>
                 )}
               </div>
             </article>
