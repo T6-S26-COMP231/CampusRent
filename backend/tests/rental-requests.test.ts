@@ -140,21 +140,39 @@ describe('rental request MongoDB persistence', () => {
     });
   });
 
-  test('decline endpoint is not implemented on this branch', async () => {
+  test('declined request remains declined after a new server instance', async () => {
     const ownerToken = signToken({
       id: ownerId,
       email: 'owner@mycentennialcollege.ca',
       role: 'student',
     });
+    const renterToken = signToken({
+      id: renterId,
+      email: 'renter@mycentennialcollege.ca',
+      role: 'student',
+    });
 
     await withFreshServer(async (baseUrl) => {
-      const response = await api(baseUrl, 'PATCH', `/api/requests/${requestId}/decline`, {
+      const declined = await api(baseUrl, 'PATCH', `/api/requests/${requestId}/decline`, {
         token: ownerToken,
       });
-      assert.equal(response.status, 404);
+      assert.equal(declined.status, 200);
+      assert.equal(declined.data.status, 'declined');
+    });
 
-      const stored = await RentalRequest.findById(requestId).lean();
-      assert.equal(stored?.status, 'pending');
+    await withFreshServer(async (baseUrl) => {
+      const renterView = await api(baseUrl, 'GET', `/api/requests/mine/listing/${listingId}`, {
+        token: renterToken,
+      });
+      assert.equal(renterView.status, 200);
+      assert.equal(renterView.data.status, 'declined');
+
+      const listing = await api(baseUrl, 'GET', `/api/listings/${listingId}`, {
+        token: ownerToken,
+      });
+      assert.equal(listing.status, 200);
+      assert.equal(listing.data.availability, 'available');
     });
   });
 });
+

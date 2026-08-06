@@ -6,7 +6,7 @@ export interface RentalRequestDoc {
   renter_id: number;
   start_date: string;
   end_date: string;
-  status: 'pending' | 'accepted';
+  status: 'pending' | 'accepted' | 'declined';
   created_at: Date;
   updated_at: Date;
 }
@@ -20,7 +20,7 @@ const rentalRequestSchema = new Schema<RentalRequestDoc>(
     end_date: { type: String, required: true },
     status: {
       type: String,
-      enum: ['pending', 'accepted'],
+      enum: ['pending', 'accepted', 'declined'],
       default: 'pending',
       index: true,
     },
