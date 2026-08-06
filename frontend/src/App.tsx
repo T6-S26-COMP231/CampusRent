@@ -12,6 +12,8 @@ import CreateListingPage from './pages/CreateListingPage';
 import EditListingPage from './pages/EditListingPage';
 import RequestsPage from './pages/RequestsPage';
 import MyRequestsPage from './pages/MyRequestsPage';
+import ConversationsPage from './pages/ConversationsPage';
+import ConversationDetailPage from './pages/ConversationDetailPage';
 import AdminPage from './pages/AdminPage';
 
 function ProtectedRoute({
@@ -138,6 +140,22 @@ export default function App() {
           element={
             <ProtectedRoute requireVerifiedStudent>
               <MyRequestsPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="conversations"
+          element={
+            <ProtectedRoute requireVerifiedStudent>
+              <ConversationsPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="conversations/:id"
+          element={
+            <ProtectedRoute requireVerifiedStudent>
+              <ConversationDetailPage />
             </ProtectedRoute>
           }
         />

@@ -10,7 +10,10 @@ import {
 } from 'lucide-react';
 import { api, assetUrl, Listing, RentalRequest } from '../api/client';
 import { useAuth } from '../context/AuthContext';
+import ConversationStartedNotice from '../components/ConversationStartedNotice';
+import StartConversationButton from '../components/StartConversationButton';
 import StatusBadge from '../components/StatusBadge';
+import { ConversationTarget } from '../utils/startConversation';
 
 export default function ListingDetailPage() {
   const { id } = useParams();
@@ -24,6 +27,10 @@ export default function ListingDetailPage() {
   const [endDate, setEndDate] = useState('');
   const [success, setSuccess] = useState('');
   const [error, setError] = useState('');
+  const [conversationNotice, setConversationNotice] = useState<{
+    message: string;
+    conversationId: number;
+  } | null>(null);
 
   const loadPage = async () => {
     try {
@@ -51,6 +58,7 @@ export default function ListingDetailPage() {
     event.preventDefault();
     setError('');
     setSuccess('');
+    setConversationNotice(null);
     setSubmitting(true);
     try {
       const request = await api.post<RentalRequest>('/requests', {
@@ -80,6 +88,14 @@ export default function ListingDetailPage() {
   if (!listing) return null;
 
   const isOwner = user?.id === listing.owner?.id;
+  const ownerConversationTarget: ConversationTarget | null = listing.owner
+    ? {
+        listingId: listing.id,
+        counterpartId: listing.owner.id,
+        counterpartName: `${listing.owner.first_name} ${listing.owner.last_name}`.trim(),
+        counterpartRole: 'owner',
+      }
+    : null;
 
   return (
     <div className="mx-auto max-w-6xl px-4 py-10 sm:px-6">
@@ -162,9 +178,34 @@ export default function ListingDetailPage() {
                   <Phone className="h-4 w-4" /> {listing.owner.phone}
                 </p>
               )}
+              <StartConversationButton
+                viewerId={user?.id}
+                target={ownerConversationTarget}
+                disabled={submitting}
+                className="mt-4 w-full"
+                onSuccess={(result) => {
+                  setError('');
+                  setSuccess('');
+                  setConversationNotice({
+                    message: result.message,
+                    conversationId: result.conversationId,
+                  });
+                }}
+                onError={(message) => {
+                  setSuccess('');
+                  setConversationNotice(null);
+                  setError(message);
+                }}
+              />
             </div>
           )}
 
+          {conversationNotice && (
+            <ConversationStartedNotice
+              message={conversationNotice.message}
+              conversationId={conversationNotice.conversationId}
+            />
+          )}
           {success && (
             <div className="mt-5 rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-700">
               {success}

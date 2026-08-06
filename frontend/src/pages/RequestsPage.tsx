@@ -1,13 +1,32 @@
 import { useEffect, useState } from 'react';
 import { CheckCircle2, ClipboardList, XCircle } from 'lucide-react';
 import { api, RentalRequest } from '../api/client';
+import ConversationStartedNotice from '../components/ConversationStartedNotice';
+import StartConversationButton from '../components/StartConversationButton';
 import StatusBadge from '../components/StatusBadge';
+import { useAuth } from '../context/AuthContext';
+import { ConversationTarget } from '../utils/startConversation';
+
+function renterTargetForRequest(request: RentalRequest): ConversationTarget | null {
+  if (!request.renter) return null;
+  return {
+    listingId: request.listing?.id ?? request.listing_id,
+    counterpartId: request.renter.id,
+    counterpartName: `${request.renter.first_name} ${request.renter.last_name}`.trim(),
+    counterpartRole: 'renter',
+  };
+}
 
 export default function RequestsPage() {
+  const { user } = useAuth();
   const [requests, setRequests] = useState<RentalRequest[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
+  const [conversationNotice, setConversationNotice] = useState<{
+    message: string;
+    conversationId: number;
+  } | null>(null);
   const [approvingId, setApprovingId] = useState<number | null>(null);
   const [decliningId, setDecliningId] = useState<number | null>(null);
   const [completingId, setCompletingId] = useState<number | null>(null);
@@ -27,6 +46,7 @@ export default function RequestsPage() {
   const approve = async (requestId: number) => {
     setError('');
     setMessage('');
+    setConversationNotice(null);
     setConfirmDeclineId(null);
     setConfirmCompleteId(null);
     setApprovingId(requestId);
@@ -44,6 +64,7 @@ export default function RequestsPage() {
   const decline = async (requestId: number) => {
     setError('');
     setMessage('');
+    setConversationNotice(null);
     setDecliningId(requestId);
     try {
       await api.patch(`/requests/${requestId}/decline`);
@@ -60,6 +81,7 @@ export default function RequestsPage() {
   const completeRequest = async (requestId: number) => {
     setError('');
     setMessage('');
+    setConversationNotice(null);
     setCompletingId(requestId);
     try {
       await api.patch(`/requests/${requestId}/complete`);
@@ -85,6 +107,12 @@ export default function RequestsPage() {
         </p>
       </div>
 
+      {conversationNotice && (
+        <ConversationStartedNotice
+          message={conversationNotice.message}
+          conversationId={conversationNotice.conversationId}
+        />
+      )}
       {message && <div className="mt-6 rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-700">{message}</div>}
       {error && <div className="mt-6 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">{error}</div>}
 
@@ -173,53 +201,72 @@ export default function RequestsPage() {
                   )}
                 </div>
 
-                {request.status === 'pending' &&
-                  confirmDeclineId !== request.id &&
-                  confirmCompleteId !== request.id && (
+                {confirmDeclineId !== request.id && confirmCompleteId !== request.id && (
                   <div className="flex shrink-0 flex-col gap-2 sm:items-stretch">
-                    <button
-                      type="button"
-                      onClick={() => approve(request.id)}
-                      className="btn-primary"
+                    <StartConversationButton
+                      viewerId={user?.id}
+                      target={renterTargetForRequest(request)}
                       disabled={busyId === request.id}
-                    >
-                      <CheckCircle2 className="h-4 w-4" />
-                      {approvingId === request.id ? 'Approving...' : 'Approve Request'}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
+                      onSuccess={(result) => {
                         setError('');
                         setMessage('');
-                        setConfirmCompleteId(null);
-                        setConfirmDeclineId(request.id);
+                        setConversationNotice({
+                          message: result.message,
+                          conversationId: result.conversationId,
+                        });
                       }}
-                      className="btn-secondary"
-                      disabled={busyId === request.id}
-                    >
-                      <XCircle className="h-4 w-4" />
-                      Decline Request
-                    </button>
-                  </div>
-                )}
+                      onError={(text) => {
+                        setMessage('');
+                        setConversationNotice(null);
+                        setError(text);
+                      }}
+                    />
 
-                {request.status === 'accepted' &&
-                  confirmDeclineId !== request.id &&
-                  confirmCompleteId !== request.id && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setError('');
-                      setMessage('');
-                      setConfirmDeclineId(null);
-                      setConfirmCompleteId(request.id);
-                    }}
-                    className="btn-primary shrink-0"
-                    disabled={busyId === request.id}
-                  >
-                    <CheckCircle2 className="h-4 w-4" />
-                    Mark Completed
-                  </button>
+                    {request.status === 'pending' && (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => approve(request.id)}
+                          className="btn-primary"
+                          disabled={busyId === request.id}
+                        >
+                          <CheckCircle2 className="h-4 w-4" />
+                          {approvingId === request.id ? 'Approving...' : 'Approve Request'}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setError('');
+                            setMessage('');
+                            setConfirmCompleteId(null);
+                            setConfirmDeclineId(request.id);
+                          }}
+                          className="btn-secondary"
+                          disabled={busyId === request.id}
+                        >
+                          <XCircle className="h-4 w-4" />
+                          Decline Request
+                        </button>
+                      </>
+                    )}
+
+                    {request.status === 'accepted' && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setError('');
+                          setMessage('');
+                          setConfirmDeclineId(null);
+                          setConfirmCompleteId(request.id);
+                        }}
+                        className="btn-primary"
+                        disabled={busyId === request.id}
+                      >
+                        <CheckCircle2 className="h-4 w-4" />
+                        Mark Completed
+                      </button>
+                    )}
+                  </div>
                 )}
               </div>
             </article>

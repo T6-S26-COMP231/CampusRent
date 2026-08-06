@@ -26,10 +26,10 @@ export function setToken(token: string | null) {
   }
 }
 
-async function request<T>(
+async function requestWithStatus<T>(
   path: string,
   options: RequestInit = {}
-): Promise<T> {
+): Promise<{ data: T; status: number }> {
   const headers: Record<string, string> = {
     ...(options.headers as Record<string, string>),
   };
@@ -81,7 +81,23 @@ async function request<T>(
     throw new Error(errorMessage);
   }
 
-  return data as T;
+  return { data: data as T, status: response.status };
+}
+
+async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
+  const { data } = await requestWithStatus<T>(path, options);
+  return data;
+}
+
+export interface StartConversationBody {
+  listing_id: number;
+  recipient_id: number;
+}
+
+export interface StartConversationResult {
+  conversation: Conversation;
+  /** true when the API returned 201 Created; false for 200 existing. */
+  created: boolean;
 }
 
 export const api = {
@@ -122,6 +138,18 @@ export const api = {
       method: 'PUT',
       body: formData,
     }),
+
+  /** US-16.6 — create or return an existing conversation (201 / 200). */
+  startConversation: async (body: StartConversationBody): Promise<StartConversationResult> => {
+    const { data, status } = await requestWithStatus<Conversation>('/conversations', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    });
+    return {
+      conversation: data,
+      created: status === 201,
+    };
+  },
 };
 
 export interface User {
@@ -171,4 +199,25 @@ export interface RentalRequest {
   renter?: User;
   owner?: User;
   created_at: string;
+}
+
+export interface Conversation {
+  id: number;
+  listing_id: number;
+  participant_low_id: number;
+  participant_high_id: number;
+  participant_ids: number[];
+  created_at: string;
+  updated_at: string;
+}
+
+/** Enriched conversation row from GET /api/conversations. */
+export interface ConversationSummary extends Conversation {
+  listing: { id: number; title: string } | null;
+  counterpart: {
+    id: number;
+    first_name: string;
+    last_name: string;
+  } | null;
+  latest_message_preview: string | null;
 }

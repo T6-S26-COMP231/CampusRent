@@ -2,13 +2,32 @@ import { useEffect, useState } from 'react';
 import { CheckCircle2, ClipboardList, XCircle } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { api, RentalRequest } from '../api/client';
+import ConversationStartedNotice from '../components/ConversationStartedNotice';
+import StartConversationButton from '../components/StartConversationButton';
 import StatusBadge from '../components/StatusBadge';
+import { useAuth } from '../context/AuthContext';
+import { ConversationTarget } from '../utils/startConversation';
+
+function ownerTargetForRequest(request: RentalRequest): ConversationTarget | null {
+  if (!request.owner) return null;
+  return {
+    listingId: request.listing?.id ?? request.listing_id,
+    counterpartId: request.owner.id,
+    counterpartName: `${request.owner.first_name} ${request.owner.last_name}`.trim(),
+    counterpartRole: 'owner',
+  };
+}
 
 export default function MyRequestsPage() {
+  const { user } = useAuth();
   const [requests, setRequests] = useState<RentalRequest[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
+  const [conversationNotice, setConversationNotice] = useState<{
+    message: string;
+    conversationId: number;
+  } | null>(null);
   const [cancellingId, setCancellingId] = useState<number | null>(null);
   const [completingId, setCompletingId] = useState<number | null>(null);
   const [confirmCancelId, setConfirmCancelId] = useState<number | null>(null);
@@ -28,6 +47,7 @@ export default function MyRequestsPage() {
   const cancelRequest = async (requestId: number) => {
     setError('');
     setMessage('');
+    setConversationNotice(null);
     setCancellingId(requestId);
     try {
       await api.patch(`/requests/${requestId}/cancel`);
@@ -44,6 +64,7 @@ export default function MyRequestsPage() {
   const completeRequest = async (requestId: number) => {
     setError('');
     setMessage('');
+    setConversationNotice(null);
     setCompletingId(requestId);
     try {
       await api.patch(`/requests/${requestId}/complete`);
@@ -71,6 +92,12 @@ export default function MyRequestsPage() {
         </p>
       </div>
 
+      {conversationNotice && (
+        <ConversationStartedNotice
+          message={conversationNotice.message}
+          conversationId={conversationNotice.conversationId}
+        />
+      )}
       {message && (
         <div className="mt-6 rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-700">
           {message}
@@ -194,43 +221,62 @@ export default function MyRequestsPage() {
                   )}
                 </div>
 
-                {request.status === 'pending' &&
-                  confirmCancelId !== request.id &&
-                  confirmCompleteId !== request.id && (
-                    <button
-                      type="button"
-                      onClick={() => {
+                {confirmCancelId !== request.id && confirmCompleteId !== request.id && (
+                  <div className="flex shrink-0 flex-col gap-2 sm:items-stretch">
+                    <StartConversationButton
+                      viewerId={user?.id}
+                      target={ownerTargetForRequest(request)}
+                      disabled={busyId === request.id}
+                      onSuccess={(result) => {
                         setError('');
                         setMessage('');
-                        setConfirmCompleteId(null);
-                        setConfirmCancelId(request.id);
+                        setConversationNotice({
+                          message: result.message,
+                          conversationId: result.conversationId,
+                        });
                       }}
-                      className="btn-secondary shrink-0"
-                      disabled={busyId === request.id}
-                    >
-                      <XCircle className="h-4 w-4" />
-                      Cancel Request
-                    </button>
-                  )}
+                      onError={(text) => {
+                        setMessage('');
+                        setConversationNotice(null);
+                        setError(text);
+                      }}
+                    />
 
-                {request.status === 'accepted' &&
-                  confirmCancelId !== request.id &&
-                  confirmCompleteId !== request.id && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setError('');
-                        setMessage('');
-                        setConfirmCancelId(null);
-                        setConfirmCompleteId(request.id);
-                      }}
-                      className="btn-primary shrink-0"
-                      disabled={busyId === request.id}
-                    >
-                      <CheckCircle2 className="h-4 w-4" />
-                      Mark Completed
-                    </button>
-                  )}
+                    {request.status === 'pending' && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setError('');
+                          setMessage('');
+                          setConfirmCompleteId(null);
+                          setConfirmCancelId(request.id);
+                        }}
+                        className="btn-secondary"
+                        disabled={busyId === request.id}
+                      >
+                        <XCircle className="h-4 w-4" />
+                        Cancel Request
+                      </button>
+                    )}
+
+                    {request.status === 'accepted' && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setError('');
+                          setMessage('');
+                          setConfirmCancelId(null);
+                          setConfirmCompleteId(request.id);
+                        }}
+                        className="btn-primary"
+                        disabled={busyId === request.id}
+                      >
+                        <CheckCircle2 className="h-4 w-4" />
+                        Mark Completed
+                      </button>
+                    )}
+                  </div>
+                )}
               </div>
             </article>
           ))}
