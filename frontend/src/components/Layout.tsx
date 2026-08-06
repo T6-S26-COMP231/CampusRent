@@ -3,6 +3,7 @@ import {
   ClipboardList,
   LogOut,
   Menu,
+  MessageCircle,
   Package,
   PlusCircle,
   Search,
@@ -69,6 +70,9 @@ export default function Layout() {
                 <NavLink to="/my-requests" className={navLinkClass}>
                   <ClipboardList className="h-4 w-4" /> My Requests
                 </NavLink>
+                <NavLink to="/conversations" className={navLinkClass}>
+                  <MessageCircle className="h-4 w-4" /> Conversations
+                </NavLink>
               </>
             )}
             {isAdmin && (
@@ -116,6 +120,7 @@ export default function Layout() {
                   <NavLink to="/listings/new" className={navLinkClass} onClick={closeMobile}>List Item</NavLink>
                   <NavLink to="/requests" className={navLinkClass} onClick={closeMobile}>Incoming Requests</NavLink>
                   <NavLink to="/my-requests" className={navLinkClass} onClick={closeMobile}>My Requests</NavLink>
+                  <NavLink to="/conversations" className={navLinkClass} onClick={closeMobile}>Conversations</NavLink>
                 </>
               )}
               {isAdmin && (

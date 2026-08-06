@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { CheckCircle2, ClipboardList, XCircle } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { api, RentalRequest } from '../api/client';
+import ConversationStartedNotice from '../components/ConversationStartedNotice';
 import StartConversationButton from '../components/StartConversationButton';
 import StatusBadge from '../components/StatusBadge';
 import { useAuth } from '../context/AuthContext';
@@ -23,6 +24,10 @@ export default function MyRequestsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
+  const [conversationNotice, setConversationNotice] = useState<{
+    message: string;
+    conversationId: number;
+  } | null>(null);
   const [cancellingId, setCancellingId] = useState<number | null>(null);
   const [completingId, setCompletingId] = useState<number | null>(null);
   const [confirmCancelId, setConfirmCancelId] = useState<number | null>(null);
@@ -42,6 +47,7 @@ export default function MyRequestsPage() {
   const cancelRequest = async (requestId: number) => {
     setError('');
     setMessage('');
+    setConversationNotice(null);
     setCancellingId(requestId);
     try {
       await api.patch(`/requests/${requestId}/cancel`);
@@ -58,6 +64,7 @@ export default function MyRequestsPage() {
   const completeRequest = async (requestId: number) => {
     setError('');
     setMessage('');
+    setConversationNotice(null);
     setCompletingId(requestId);
     try {
       await api.patch(`/requests/${requestId}/complete`);
@@ -85,6 +92,12 @@ export default function MyRequestsPage() {
         </p>
       </div>
 
+      {conversationNotice && (
+        <ConversationStartedNotice
+          message={conversationNotice.message}
+          conversationId={conversationNotice.conversationId}
+        />
+      )}
       {message && (
         <div className="mt-6 rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-700">
           {message}
@@ -214,6 +227,19 @@ export default function MyRequestsPage() {
                       viewerId={user?.id}
                       target={ownerTargetForRequest(request)}
                       disabled={busyId === request.id}
+                      onSuccess={(result) => {
+                        setError('');
+                        setMessage('');
+                        setConversationNotice({
+                          message: result.message,
+                          conversationId: result.conversationId,
+                        });
+                      }}
+                      onError={(text) => {
+                        setMessage('');
+                        setConversationNotice(null);
+                        setError(text);
+                      }}
                     />
 
                     {request.status === 'pending' && (

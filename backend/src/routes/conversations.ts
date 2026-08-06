@@ -6,6 +6,7 @@ import {
   ConversationDoc,
   ConversationIdentity,
   conversationIdentity,
+  isConversationParticipant,
   toConversationRow,
 } from '../models/Conversation';
 import { Listing } from '../models/Listing';
@@ -30,19 +31,86 @@ async function findConversationByIdentity(identity: ConversationIdentity) {
 }
 
 /**
+ * Enrich for the messaging dashboard.
+ * No Message documents — preview stays empty until US-17. The frontend shows
+ * the truthful “No messages yet” label when latest_message_preview is null.
+ */
+async function enrichConversation(conversation: ConversationDoc, viewerId: number) {
+  const listing = await Listing.findById(conversation.listing_id).lean();
+  const counterpartId =
+    conversation.participant_low_id === viewerId
+      ? conversation.participant_high_id
+      : conversation.participant_low_id;
+  const counterpart = await User.findById(counterpartId).lean();
+
+  return {
+    ...toConversationRow(conversation),
+    listing: listing
+      ? {
+          id: listing._id,
+          title: listing.title,
+        }
+      : null,
+    counterpart: counterpart
+      ? {
+          id: counterpart._id,
+          first_name: counterpart.first_name,
+          last_name: counterpart.last_name,
+        }
+      : null,
+    latest_message_preview: null as string | null,
+  };
+}
+
+/**
+ * US-16.6 — list conversations for the authenticated participant only.
+ * Sorted newest updated first. Empty-conversation shell assumption unchanged:
+ * identity is listing + participants; message content belongs to US-17.
+ */
+router.get(
+  '/',
+  asyncHandler(async (req, res) => {
+    const viewerId = req.user!.id;
+    const conversations = await Conversation.find({
+      $or: [{ participant_low_id: viewerId }, { participant_high_id: viewerId }],
+    }).sort({ updated_at: -1, created_at: -1 });
+
+    return res.json(
+      await Promise.all(
+        conversations.map((conversation) => enrichConversation(conversation, viewerId))
+      )
+    );
+  })
+);
+
+/**
+ * US-16.6 — open a single conversation shell. Participants only.
+ */
+router.get(
+  '/:id',
+  asyncHandler(async (req, res) => {
+    const conversationId = Number(req.params.id);
+    if (!Number.isInteger(conversationId) || conversationId <= 0) {
+      return res.status(400).json({ error: 'Invalid conversation id' });
+    }
+
+    const conversation = await Conversation.findById(conversationId);
+    if (!conversation) {
+      return res.status(404).json({ error: 'Conversation not found' });
+    }
+
+    if (!isConversationParticipant(conversation, req.user!.id)) {
+      return res.status(403).json({ error: 'Only conversation participants may view this conversation' });
+    }
+
+    return res.json(await enrichConversation(conversation, req.user!.id));
+  })
+);
+
+/**
  * US-16.5 — participant authorization and duplicate prevention.
  *
  * Body: { listing_id, recipient_id }. Initiator is always req.user.id.
- *
- * Authorization:
- * - Both participants must be distinct verified registered students.
- * - One participant must be the listing owner.
- * - Non-owner initiator may only message the listing owner (prospective renter).
- * - Listing owner may only message a user who has a rental request for that listing.
- *
- * Duplicates:
- * - Same listing + normalized participant pair returns the existing row (200).
- * - First create returns 201. Concurrent creates catch MongoDB 11000 and return 200.
  *
  * Empty-conversation assumption (TAC ambiguity, not fully resolved):
  * US-16 identifies a conversation by listing + participants only. Message content

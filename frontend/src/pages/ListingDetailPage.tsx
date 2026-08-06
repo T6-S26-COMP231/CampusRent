@@ -10,6 +10,7 @@ import {
 } from 'lucide-react';
 import { api, assetUrl, Listing, RentalRequest } from '../api/client';
 import { useAuth } from '../context/AuthContext';
+import ConversationStartedNotice from '../components/ConversationStartedNotice';
 import StartConversationButton from '../components/StartConversationButton';
 import StatusBadge from '../components/StatusBadge';
 import { ConversationTarget } from '../utils/startConversation';
@@ -26,6 +27,10 @@ export default function ListingDetailPage() {
   const [endDate, setEndDate] = useState('');
   const [success, setSuccess] = useState('');
   const [error, setError] = useState('');
+  const [conversationNotice, setConversationNotice] = useState<{
+    message: string;
+    conversationId: number;
+  } | null>(null);
 
   const loadPage = async () => {
     try {
@@ -53,6 +58,7 @@ export default function ListingDetailPage() {
     event.preventDefault();
     setError('');
     setSuccess('');
+    setConversationNotice(null);
     setSubmitting(true);
     try {
       const request = await api.post<RentalRequest>('/requests', {
@@ -177,10 +183,29 @@ export default function ListingDetailPage() {
                 target={ownerConversationTarget}
                 disabled={submitting}
                 className="mt-4 w-full"
+                onSuccess={(result) => {
+                  setError('');
+                  setSuccess('');
+                  setConversationNotice({
+                    message: result.message,
+                    conversationId: result.conversationId,
+                  });
+                }}
+                onError={(message) => {
+                  setSuccess('');
+                  setConversationNotice(null);
+                  setError(message);
+                }}
               />
             </div>
           )}
 
+          {conversationNotice && (
+            <ConversationStartedNotice
+              message={conversationNotice.message}
+              conversationId={conversationNotice.conversationId}
+            />
+          )}
           {success && (
             <div className="mt-5 rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-700">
               {success}
