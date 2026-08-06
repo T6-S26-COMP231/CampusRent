@@ -1,8 +1,8 @@
 import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
-import db from '../db';
-
-const JWT_SECRET = process.env.JWT_SECRET || 'campusrent-dev-secret-change-in-production';
+import { getJwtSecret } from '../config/env';
+import { User, toAuthUser } from '../models/User';
+import { asyncHandler } from '../utils/asyncHandler';
 
 export interface AuthUser {
   id: number;
@@ -23,56 +23,56 @@ declare global {
 }
 
 export function signToken(user: { id: number; email: string; role: string }) {
-  return jwt.sign({ id: user.id, email: user.email, role: user.role }, JWT_SECRET, {
+  return jwt.sign({ id: user.id, email: user.email, role: user.role }, getJwtSecret(), {
     expiresIn: '7d',
   });
 }
 
-export function authenticate(req: Request, res: Response, next: NextFunction) {
+export const authenticate = asyncHandler(async (req, res, next) => {
   const header = req.headers.authorization;
   if (!header?.startsWith('Bearer ')) {
     return res.status(401).json({ error: 'Authentication required' });
   }
 
+  let payload: { id: number };
   try {
-    const payload = jwt.verify(header.slice(7), JWT_SECRET) as { id: number };
-    const user = db
-      .prepare(
-        `SELECT id, email, role, verification_status, status, first_name, last_name
-         FROM users WHERE id = ?`
-      )
-      .get(payload.id) as AuthUser | undefined;
-
-    if (!user) return res.status(401).json({ error: 'User not found' });
-    if (user.status === 'suspended') {
-      return res.status(403).json({ error: 'Account suspended' });
-    }
-
-    req.user = user;
-    next();
+    payload = jwt.verify(header.slice(7), getJwtSecret()) as { id: number };
   } catch {
     return res.status(401).json({ error: 'Invalid or expired token' });
   }
-}
 
-export function optionalAuth(req: Request, _res: Response, next: NextFunction) {
+  // Database failures must propagate to error middleware (not look like auth failures).
+  const user = await User.findById(payload.id);
+  if (!user) return res.status(401).json({ error: 'User not found' });
+  if (user.status === 'suspended') {
+    return res.status(403).json({ error: 'Account suspended' });
+  }
+
+  req.user = toAuthUser(user);
+  next();
+});
+
+export const optionalAuth = asyncHandler(async (req, _res, next) => {
   const header = req.headers.authorization;
   if (!header?.startsWith('Bearer ')) return next();
 
+  let payload: { id: number };
   try {
-    const payload = jwt.verify(header.slice(7), JWT_SECRET) as { id: number };
-    const user = db
-      .prepare(
-        `SELECT id, email, role, verification_status, status, first_name, last_name
-         FROM users WHERE id = ?`
-      )
-      .get(payload.id) as AuthUser | undefined;
-    if (user && user.status !== 'suspended') req.user = user;
+    payload = jwt.verify(header.slice(7), getJwtSecret()) as { id: number };
   } catch {
-    /* A guest request can continue without authentication. */
+    return next();
+  }
+
+  try {
+    const user = await User.findById(payload.id);
+    if (user && user.status !== 'suspended') {
+      req.user = toAuthUser(user);
+    }
+  } catch {
+    /* Optional auth must not block the request on database issues. */
   }
   next();
-}
+});
 
 /**
  * Iteration 1 registered-student functions belong only to verified users whose

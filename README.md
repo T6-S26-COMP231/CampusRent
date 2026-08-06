@@ -53,10 +53,12 @@ The small renter-visible request-status panel is present only because US-13 requ
 | Frontend | React 18, TypeScript, Vite, Tailwind CSS |
 | Backend | Node.js, Express, TypeScript |
 | Authentication | JWT |
-| Persistence | Local JSON test-bed store |
+| Persistence | MongoDB (Mongoose) via `MONGODB_URI` |
 | API | REST over HTTP/JSON |
 
-> The local JSON store is suitable for running and recording the Iteration 1 test bed on one computer. It is not suitable as persistent storage on a serverless deployment. A hosted production version needs a managed persistent database.
+> Application data (users, listings, rental requests) is stored in MongoDB. Configure `MONGODB_URI` before starting the backend. The API refuses to start without a valid MongoDB connection and does not fall back to local JSON storage.
+>
+> **Image files** are still written to `backend/uploads/` on the local filesystem. MongoDB persists listing records and image *filenames*, but uploaded binary files are not durable on ephemeral hosts (for example Render’s default disk). For production image durability, mount a Render persistent disk at `backend/uploads` or move uploads to object storage (S3, Cloudinary, etc.).
 
 ## Install and run
 
@@ -99,8 +101,10 @@ Backend:
 
 ```env
 PORT=3001
+NODE_ENV=development
 JWT_SECRET=replace-with-a-long-random-secret
 FRONTEND_URL=http://localhost:5173
+MONGODB_URI=mongodb+srv://USERNAME:PASSWORD@CLUSTER_HOST/DATABASE_NAME
 ```
 
 Frontend, only when the API is deployed separately:
@@ -111,21 +115,35 @@ VITE_API_URL=https://your-backend.example.com/api
 
 Never commit `.env` files, JWT secrets, passwords, database credentials, or API keys.
 
+### Legacy JSON migration (optional, one-time)
+
+If you still have a local `backend/data/store.json` from the old test-bed store, import missing rows into MongoDB with:
+
+```bash
+npm run migrate:store --prefix backend
+```
+
+This script inserts only missing users, listings, and rental requests. It does **not** run on normal startup, does not overwrite existing MongoDB documents, and does not delete the JSON file.
+
 ## Project structure
 
 ```text
-CampusRent Iteration 1/
+CampusRent/
 ├── backend/src/
+│   ├── config/env.ts
+│   ├── db/connection.ts
+│   ├── models/
 │   ├── middleware/auth.ts
 │   ├── routes/
 │   │   ├── auth.ts
 │   │   ├── admin.ts
 │   │   ├── listings.ts
 │   │   └── requests.ts
-│   ├── utils/validation.ts
-│   ├── db.ts
+│   ├── utils/
+│   ├── app.ts
 │   ├── index.ts
 │   └── seed.ts
+├── backend/scripts/migrate-store-json.ts
 ├── frontend/src/
 │   ├── api/
 │   ├── components/
