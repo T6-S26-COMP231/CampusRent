@@ -1,12 +1,19 @@
 import mongoose, { Schema } from 'mongoose';
 
+export type RentalRequestStatus =
+  | 'pending'
+  | 'accepted'
+  | 'declined'
+  | 'cancelled'
+  | 'completed';
+
 export interface RentalRequestDoc {
   _id: number;
   listing_id: number;
   renter_id: number;
   start_date: string;
   end_date: string;
-  status: 'pending' | 'accepted' | 'declined';
+  status: RentalRequestStatus;
   created_at: Date;
   updated_at: Date;
 }
@@ -20,7 +27,7 @@ const rentalRequestSchema = new Schema<RentalRequestDoc>(
     end_date: { type: String, required: true },
     status: {
       type: String,
-      enum: ['pending', 'accepted', 'declined'],
+      enum: ['pending', 'accepted', 'declined', 'cancelled', 'completed'],
       default: 'pending',
       index: true,
     },

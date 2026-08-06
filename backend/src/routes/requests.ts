@@ -59,9 +59,21 @@ router.get(
 );
 
 /**
- * Minimal renter-visible status for a single listing (US-13/US-14).
- * Does not implement the full Iteration 2 request-tracking dashboard,
- * cancellation, or completed-rental workflow from US-15.
+ * US-15 — authenticated renter dashboard: current and past requests for the caller only.
+ */
+router.get(
+  '/mine',
+  asyncHandler(async (req, res) => {
+    const requests = await RentalRequest.find({ renter_id: req.user!.id }).sort({
+      created_at: -1,
+    });
+
+    return res.json(await Promise.all(requests.map((request) => enrichRequest(request))));
+  })
+);
+
+/**
+ * Minimal renter-visible status for a single listing (US-13/US-14/US-15).
  */
 router.get(
   '/mine/listing/:listingId',
@@ -200,6 +212,73 @@ router.patch(
     request.status = 'declined';
     request.updated_at = new Date();
     await request.save();
+
+    return res.json(await enrichRequest(request));
+  })
+);
+
+router.patch(
+  '/:id/cancel',
+  asyncHandler(async (req, res) => {
+    const requestId = Number(req.params.id);
+    if (!Number.isInteger(requestId) || requestId <= 0) {
+      return res.status(400).json({ error: 'Invalid request id' });
+    }
+
+    const request = await RentalRequest.findById(requestId);
+    if (!request) return res.status(404).json({ error: 'Request not found' });
+    if (request.renter_id !== req.user!.id) {
+      return res.status(403).json({ error: 'Only the requesting renter may cancel this request' });
+    }
+    if (request.status !== 'pending') {
+      return res.status(400).json({ error: 'Only pending requests can be cancelled' });
+    }
+
+    request.status = 'cancelled';
+    request.updated_at = new Date();
+    await request.save();
+
+    return res.json(await enrichRequest(request));
+  })
+);
+
+/**
+ * Completion authorization (assumption documented for US-15):
+ * Either the requesting renter or the listing owner may mark an Accepted rental Completed.
+ * Completing restores listing availability so the item can be rented again.
+ */
+router.patch(
+  '/:id/complete',
+  asyncHandler(async (req, res) => {
+    const requestId = Number(req.params.id);
+    if (!Number.isInteger(requestId) || requestId <= 0) {
+      return res.status(400).json({ error: 'Invalid request id' });
+    }
+
+    const request = await RentalRequest.findById(requestId);
+    if (!request) return res.status(404).json({ error: 'Request not found' });
+    if (request.status !== 'accepted') {
+      return res.status(400).json({ error: 'Only accepted requests can be completed' });
+    }
+
+    const listing = await Listing.findById(request.listing_id);
+    if (!listing) return res.status(404).json({ error: 'Listing not found' });
+
+    const isRenter = request.renter_id === req.user!.id;
+    const isOwner = listing.owner_id === req.user!.id;
+    if (!isRenter && !isOwner) {
+      return res.status(403).json({
+        error: 'Only the renter or listing owner may complete this rental',
+      });
+    }
+
+    request.status = 'completed';
+    request.updated_at = new Date();
+    await request.save();
+
+    listing.availability = 'available';
+    listing.updated_at = new Date();
+    await listing.save();
 
     return res.json(await enrichRequest(request));
   })

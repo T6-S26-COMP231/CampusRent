@@ -66,6 +66,9 @@ export default function Layout() {
                 <NavLink to="/requests" className={navLinkClass}>
                   <ClipboardList className="h-4 w-4" /> Incoming Requests
                 </NavLink>
+                <NavLink to="/my-requests" className={navLinkClass}>
+                  <ClipboardList className="h-4 w-4" /> My Requests
+                </NavLink>
               </>
             )}
             {isAdmin && (
@@ -112,6 +115,7 @@ export default function Layout() {
                   <NavLink to="/my-listings" className={navLinkClass} onClick={closeMobile}>My Listings</NavLink>
                   <NavLink to="/listings/new" className={navLinkClass} onClick={closeMobile}>List Item</NavLink>
                   <NavLink to="/requests" className={navLinkClass} onClick={closeMobile}>Incoming Requests</NavLink>
+                  <NavLink to="/my-requests" className={navLinkClass} onClick={closeMobile}>My Requests</NavLink>
                 </>
               )}
               {isAdmin && (

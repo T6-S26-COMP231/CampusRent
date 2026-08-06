@@ -11,6 +11,7 @@ import MyListingsPage from './pages/MyListingsPage';
 import CreateListingPage from './pages/CreateListingPage';
 import EditListingPage from './pages/EditListingPage';
 import RequestsPage from './pages/RequestsPage';
+import MyRequestsPage from './pages/MyRequestsPage';
 import AdminPage from './pages/AdminPage';
 
 function ProtectedRoute({
@@ -129,6 +130,14 @@ export default function App() {
           element={
             <ProtectedRoute requireVerifiedStudent>
               <RequestsPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="my-requests"
+          element={
+            <ProtectedRoute requireVerifiedStudent>
+              <MyRequestsPage />
             </ProtectedRoute>
           }
         />

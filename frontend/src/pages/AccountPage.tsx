@@ -19,7 +19,7 @@ const studentStatusConfig = {
   verified: {
     title: 'Student account verified',
     description:
-      'Your Registered Student User account can browse listings, create and manage your own listings, submit requests, and approve or decline requests for items you own.',
+      'Your Registered Student User account can browse listings, create and manage your own listings, submit and track requests, and approve, decline, or complete rentals for items you own.',
     icon: CheckCircle2,
     className: 'border-emerald-200 bg-emerald-50 text-emerald-800',
   },

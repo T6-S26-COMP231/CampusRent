@@ -161,7 +161,7 @@ export interface RentalRequest {
   renter_id: number;
   start_date: string;
   end_date: string;
-  status: 'pending' | 'accepted' | 'declined';
+  status: 'pending' | 'accepted' | 'declined' | 'cancelled' | 'completed';
   listing?: {
     id: number;
     title: string;
