@@ -1,22 +1,37 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { ArrowLeft, MessageCircle } from 'lucide-react';
 import { api, ConversationSummary } from '../api/client';
+import MessageComposer from '../components/MessageComposer';
+import { useAuth } from '../context/AuthContext';
 import {
   conversationCounterpartName,
   conversationListRoute,
   conversationListingTitle,
-  conversationPreviewText,
   formatConversationTime,
 } from '../utils/conversations';
+import {
+  EMPTY_THREAD_MESSAGE,
+  appendSentMessage,
+  formatMessageTime,
+  isConversationParticipant,
+  messageBubbleClassName,
+  messageBubbleSide,
+  messageRowClassName,
+  sortMessagesChronologically,
+  type ConversationMessage,
+} from '../utils/sendMessage';
 
 /**
- * Minimal conversation shell for US-16.
- * Message input/send and history belong to US-17 / US-18 — not implemented here.
+ * US-16 conversation shell + US-17 send workflow.
+ * Loads the current thread (minimal GET) so sent messages survive refresh;
+ * broader history UX remains US-18.
  */
 export default function ConversationDetailPage() {
   const { id } = useParams();
+  const { user } = useAuth();
   const [conversation, setConversation] = useState<ConversationSummary | null>(null);
+  const [messages, setMessages] = useState<ConversationMessage[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
@@ -28,15 +43,45 @@ export default function ConversationDetailPage() {
       return;
     }
 
+    let cancelled = false;
     setLoading(true);
-    api
-      .get<ConversationSummary>(`/conversations/${conversationId}`)
-      .then(setConversation)
-      .catch((err) =>
-        setError(err instanceof Error ? err.message : 'Unable to open conversation')
-      )
-      .finally(() => setLoading(false));
+    setError('');
+    setMessages([]);
+
+    Promise.all([
+      api.get<ConversationSummary>(`/conversations/${conversationId}`),
+      api.getConversationMessages(conversationId),
+    ])
+      .then(([detail, thread]) => {
+        if (cancelled) return;
+        setConversation(detail);
+        setMessages(sortMessagesChronologically(thread));
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        setError(err instanceof Error ? err.message : 'Unable to open conversation');
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
   }, [id]);
+
+  const orderedMessages = useMemo(
+    () => sortMessagesChronologically(messages),
+    [messages]
+  );
+
+  const viewerId = user?.id;
+  const participantIds = conversation?.participant_ids;
+  const canCompose = isConversationParticipant(viewerId, participantIds);
+
+  const handleMessageSent = (sent: ConversationMessage) => {
+    setMessages((current) => appendSentMessage(current, sent));
+  };
 
   if (loading) {
     return (
@@ -83,13 +128,44 @@ export default function ConversationDetailPage() {
             </div>
           </div>
 
-          <div className="mt-6 rounded-xl border border-slate-200 bg-slate-50 p-5 text-sm leading-6 text-slate-600">
-            <p className="font-semibold text-slate-800">{conversationPreviewText(conversation)}</p>
-            <p className="mt-2">
-              Message sending is not available yet. This conversation shell records the participants
-              and listing for CampusRent messaging in a later update.
-            </p>
+          <div
+            className="mt-6 flex max-h-[28rem] min-h-[14rem] flex-col gap-3 overflow-y-auto rounded-xl border border-slate-200 bg-slate-50 p-4"
+            aria-live="polite"
+          >
+            {orderedMessages.length === 0 ? (
+              <div className="m-auto px-4 py-8 text-center text-sm text-slate-500">
+                <p className="font-semibold text-slate-700">{EMPTY_THREAD_MESSAGE}</p>
+                <p className="mt-2">Write a message below to start the conversation.</p>
+              </div>
+            ) : (
+              orderedMessages.map((message) => {
+                const side = messageBubbleSide(message, viewerId);
+                return (
+                  <div key={message.id} className={messageRowClassName(side)}>
+                    <div className={messageBubbleClassName(side)}>
+                      <p className="whitespace-pre-wrap break-words">{message.body}</p>
+                    </div>
+                    <p className="mt-1 px-1 text-[11px] font-medium text-slate-400">
+                      {formatMessageTime(message.created_at)}
+                    </p>
+                  </div>
+                );
+              })
+            )}
           </div>
+
+          {canCompose ? (
+            <MessageComposer
+              conversationId={conversation.id}
+              viewerId={viewerId}
+              participantIds={participantIds}
+              onSent={handleMessageSent}
+            />
+          ) : (
+            <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+              Only conversation participants may send messages.
+            </div>
+          )}
         </section>
       )}
     </div>

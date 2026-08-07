@@ -10,6 +10,12 @@ import {
   toConversationRow,
 } from '../models/Conversation';
 import { Listing } from '../models/Listing';
+import {
+  MESSAGE_MAX_LENGTH,
+  Message,
+  normalizeMessageBody,
+  toMessageRow,
+} from '../models/Message';
 import { RentalRequest } from '../models/RentalRequest';
 import { User } from '../models/User';
 import { asyncHandler } from '../utils/asyncHandler';
@@ -104,6 +110,121 @@ router.get(
     }
 
     return res.json(await enrichConversation(conversation, req.user!.id));
+  })
+);
+
+/**
+ * Minimal current-thread load for the US-17 send workflow (US-17.6).
+ * Returns chronological messages for one conversation so the composer page
+ * remains usable after refresh. Broader history UX remains US-18.
+ */
+router.get(
+  '/:id/messages',
+  asyncHandler(async (req, res) => {
+    const conversationId = Number(req.params.id);
+    if (!Number.isInteger(conversationId) || conversationId <= 0) {
+      return res.status(400).json({ error: 'Invalid conversation id' });
+    }
+
+    const conversation = await Conversation.findById(conversationId);
+    if (!conversation) {
+      return res.status(404).json({ error: 'Conversation not found' });
+    }
+
+    if (!isConversationParticipant(conversation, req.user!.id)) {
+      return res.status(403).json({
+        error: 'Only conversation participants may view messages in this conversation',
+      });
+    }
+
+    const messages = await Message.find({ conversation_id: conversationId }).sort({
+      created_at: 1,
+      _id: 1,
+    });
+
+    return res.json(messages.map((message) => toMessageRow(message)));
+  })
+);
+
+/**
+ * US-17.4 / US-17.5 — send a message in a conversation.
+ *
+ * Body: { body }. Sender is always req.user.id (client sender_id is ignored).
+ * Only stored conversation participants may send. API-layer validation trims
+ * the body, rejects blank/whitespace-only/non-string/over-limit input, and
+ * never truncates.
+ */
+router.post(
+  '/:id/messages',
+  asyncHandler(async (req, res) => {
+    const conversationId = Number(req.params.id);
+    if (!Number.isInteger(conversationId) || conversationId <= 0) {
+      return res.status(400).json({ error: 'Invalid conversation id' });
+    }
+
+    const conversation = await Conversation.findById(conversationId);
+    if (!conversation) {
+      return res.status(404).json({ error: 'Conversation not found' });
+    }
+
+    const senderId = req.user!.id;
+    if (!isConversationParticipant(conversation, senderId)) {
+      return res.status(403).json({
+        error: 'Only conversation participants may send messages',
+      });
+    }
+
+    const { body } = req.body as { body?: unknown };
+
+    if (body === undefined || body === null) {
+      return res.status(400).json({ error: 'body is required' });
+    }
+    if (typeof body !== 'string') {
+      return res.status(400).json({ error: 'body must be a string' });
+    }
+
+    const trimmed = body.trim();
+    if (trimmed.length === 0) {
+      return res.status(400).json({ error: 'Message body cannot be blank' });
+    }
+    if (trimmed.length > MESSAGE_MAX_LENGTH) {
+      return res.status(400).json({
+        error: `Message body cannot exceed ${MESSAGE_MAX_LENGTH} characters`,
+      });
+    }
+
+    let normalizedBody: string;
+    try {
+      // Re-run shared model normalization so API and persistence stay aligned.
+      normalizedBody = normalizeMessageBody(trimmed);
+    } catch (error) {
+      return res.status(400).json({
+        error: error instanceof Error ? error.message : 'Invalid message body',
+      });
+    }
+
+    let created;
+    try {
+      created = await Message.create({
+        _id: await nextId('messages'),
+        conversation_id: conversation._id,
+        sender_id: senderId,
+        body: normalizedBody,
+      });
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        (error.name === 'ValidationError' || error.name === 'CastError')
+      ) {
+        return res.status(400).json({ error: error.message });
+      }
+      throw error;
+    }
+
+    conversation.updated_at = new Date();
+    await conversation.save();
+
+    return res.status(201).json(toMessageRow(created));
   })
 );
 

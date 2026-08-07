@@ -150,6 +150,22 @@ export const api = {
       created: status === 201,
     };
   },
+
+  /**
+   * US-17.6 — send a message. Never includes sender_id; server derives it from auth.
+   */
+  sendMessage: (conversationId: number, body: SendMessageBody): Promise<Message> =>
+    request<Message>(`/conversations/${conversationId}/messages`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+
+  /**
+   * Minimal current-conversation message load for the US-17 send workflow.
+   * Full history UX belongs to US-18; this only returns the active thread.
+   */
+  getConversationMessages: (conversationId: number): Promise<Message[]> =>
+    request<Message[]>(`/conversations/${conversationId}/messages`),
 };
 
 export interface User {
@@ -220,4 +236,18 @@ export interface ConversationSummary extends Conversation {
     last_name: string;
   } | null;
   latest_message_preview: string | null;
+}
+
+/** Persisted message returned by send/list message endpoints. */
+export interface Message {
+  id: number;
+  conversation_id: number;
+  sender_id: number;
+  body: string;
+  created_at: string;
+}
+
+/** POST /api/conversations/:id/messages — sender comes from auth only. */
+export interface SendMessageBody {
+  body: string;
 }
