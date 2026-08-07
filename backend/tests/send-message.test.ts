@@ -30,7 +30,14 @@ let outsiderId: number;
 let listingId: number;
 let conversationId: number;
 
-async function createStudent(email: string, firstName: string, lastName: string) {
+async function createStudent(
+  email: string,
+  firstName: string,
+  lastName: string,
+  options: {
+    verification_status?: 'pending' | 'verified' | 'rejected';
+  } = {}
+) {
   const id = await nextId('users');
   await User.create({
     _id: id,
@@ -40,7 +47,7 @@ async function createStudent(email: string, firstName: string, lastName: string)
     last_name: lastName,
     phone: '416-555-0100',
     role: 'student',
-    verification_status: 'verified',
+    verification_status: options.verification_status ?? 'verified',
     status: 'active',
   });
   return id;
@@ -123,6 +130,21 @@ describe('US-17.4 send-message API endpoint', () => {
       body: { body: 'No token' },
     });
     assert.equal(response.status, 401);
+  });
+
+  test('unverified student is denied before sending', async () => {
+    const pendingId = await createStudent(
+      'pending@mycentennialcollege.ca',
+      'Pending',
+      'Student',
+      { verification_status: 'pending' }
+    );
+    const response = await api(baseUrl, 'POST', `/api/conversations/${conversationId}/messages`, {
+      token: tokenFor(pendingId, 'pending@mycentennialcollege.ca'),
+      body: { body: 'Should be blocked' },
+    });
+    assert.equal(response.status, 403);
+    assert.equal(await Message.countDocuments(), 0);
   });
 
   test('valid message persists with id, conversation_id, sender_id, body, created_at', async () => {
