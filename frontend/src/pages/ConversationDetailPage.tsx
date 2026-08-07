@@ -23,8 +23,9 @@ import {
 } from '../utils/sendMessage';
 
 /**
- * US-16 conversation shell + US-17.2 message composer / chat display structure.
- * Message persistence and send API arrive in later US-17 tasks.
+ * US-16 conversation shell + US-17 send workflow.
+ * Loads the current thread (minimal GET) so sent messages survive refresh;
+ * broader history UX remains US-18.
  */
 export default function ConversationDetailPage() {
   const { id } = useParams();
@@ -42,15 +43,31 @@ export default function ConversationDetailPage() {
       return;
     }
 
+    let cancelled = false;
     setLoading(true);
+    setError('');
     setMessages([]);
-    api
-      .get<ConversationSummary>(`/conversations/${conversationId}`)
-      .then(setConversation)
-      .catch((err) =>
-        setError(err instanceof Error ? err.message : 'Unable to open conversation')
-      )
-      .finally(() => setLoading(false));
+
+    Promise.all([
+      api.get<ConversationSummary>(`/conversations/${conversationId}`),
+      api.getConversationMessages(conversationId),
+    ])
+      .then(([detail, thread]) => {
+        if (cancelled) return;
+        setConversation(detail);
+        setMessages(sortMessagesChronologically(thread));
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        setError(err instanceof Error ? err.message : 'Unable to open conversation');
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
   }, [id]);
 
   const orderedMessages = useMemo(
@@ -118,9 +135,7 @@ export default function ConversationDetailPage() {
             {orderedMessages.length === 0 ? (
               <div className="m-auto px-4 py-8 text-center text-sm text-slate-500">
                 <p className="font-semibold text-slate-700">{EMPTY_THREAD_MESSAGE}</p>
-                <p className="mt-2">
-                  Messages you send will appear here in order once sending is connected.
-                </p>
+                <p className="mt-2">Write a message below to start the conversation.</p>
               </div>
             ) : (
               orderedMessages.map((message) => {

@@ -1,4 +1,5 @@
 import { FormEvent, useState } from 'react';
+import { api } from '../api/client';
 import {
   MESSAGE_COMPOSER_PLACEHOLDER,
   MESSAGE_MAX_LENGTH,
@@ -15,24 +16,12 @@ interface Props {
   viewerId: number | undefined;
   participantIds: number[] | undefined;
   disabled?: boolean;
-  /** Called only with a real API-returned message (US-17.6). */
+  /** Called with the server-returned message after a successful send. */
   onSent?: (message: ConversationMessage) => void;
 }
 
 /**
- * Stand-in until US-17.6 wires POST /api/conversations/:id/messages.
- * Always rejects so the UI never invents a successful message row.
- */
-async function sendMessageUnavailable(
-  _conversationId: number,
-  _body: { body: string }
-): Promise<ConversationMessage> {
-  throw new Error('Message sending is not available yet.');
-}
-
-/**
- * US-17.2 — message composer and send control.
- * Validates and gates sends with sendMessage helpers. Real API wiring is US-17.6.
+ * US-17.2 / US-17.6 — message composer wired to POST /api/conversations/:id/messages.
  */
 export default function MessageComposer({
   conversationId,
@@ -65,6 +54,7 @@ export default function MessageComposer({
 
     if (
       disabled ||
+      sending ||
       !canSendMessage({
         draft,
         sending,
@@ -75,16 +65,18 @@ export default function MessageComposer({
       return;
     }
 
+    // Trimmed body only — never send sender_id from the client.
     const body = sendMessageRequestBody(draft);
     setSending(true);
     try {
-      const sent = await sendMessageUnavailable(conversationId, body);
+      const sent = await api.sendMessage(conversationId, body);
       setDraft('');
+      setError('');
       setSuccess('Message sent.');
       onSent?.(sent);
     } catch (err) {
       setError(sendMessageErrorMessage(err));
-      // Keep the typed draft on error.
+      // Keep the typed draft on error; do not invent a message row.
     } finally {
       setSending(false);
     }

@@ -394,3 +394,42 @@ describe('US-17.5 participant authorization and message validation', () => {
     assert.equal(messages[0]._id, valid.data.id);
   });
 });
+
+describe('US-17.6 minimal current-conversation message read for send workflow', () => {
+  test('participant can load chronological messages after sending', async () => {
+    await api(baseUrl, 'POST', `/api/conversations/${conversationId}/messages`, {
+      token: tokenFor(renterId, 'renter@mycentennialcollege.ca'),
+      body: { body: 'First' },
+    });
+    await api(baseUrl, 'POST', `/api/conversations/${conversationId}/messages`, {
+      token: tokenFor(ownerId, 'owner@mycentennialcollege.ca'),
+      body: { body: 'Second' },
+    });
+
+    const response = await api(baseUrl, 'GET', `/api/conversations/${conversationId}/messages`, {
+      token: tokenFor(renterId, 'renter@mycentennialcollege.ca'),
+    });
+
+    assert.equal(response.status, 200);
+    assert.equal(response.data.length, 2);
+    assert.deepEqual(
+      response.data.map((message: { body: string }) => message.body),
+      ['First', 'Second']
+    );
+    assert.equal(response.data[0].conversation_id, conversationId);
+    assert.equal(typeof response.data[0].id, 'number');
+    assert.equal(typeof response.data[0].created_at, 'string');
+  });
+
+  test('unrelated verified user cannot load conversation messages', async () => {
+    await api(baseUrl, 'POST', `/api/conversations/${conversationId}/messages`, {
+      token: tokenFor(renterId, 'renter@mycentennialcollege.ca'),
+      body: { body: 'Private' },
+    });
+
+    const response = await api(baseUrl, 'GET', `/api/conversations/${conversationId}/messages`, {
+      token: tokenFor(outsiderId, 'outsider@mycentennialcollege.ca'),
+    });
+    assert.equal(response.status, 403);
+  });
+});

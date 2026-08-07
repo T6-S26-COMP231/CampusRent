@@ -99,9 +99,53 @@ export function sendMessageLabel(sending: boolean): string {
   return sending ? SENDING_MESSAGE_LABEL : SEND_MESSAGE_LABEL;
 }
 
-/** Body shape reserved for a future POST /api/conversations/:id/messages. */
+/** Body shape for POST /api/conversations/:id/messages — never includes sender_id. */
 export function sendMessageRequestBody(draft: string): { body: string } {
   return { body: normalizeMessageBody(draft) };
+}
+
+/** Path used by the US-17.6 frontend API client. */
+export function conversationMessagesPath(conversationId: number): string {
+  return `/conversations/${conversationId}/messages`;
+}
+
+/**
+ * Pure request descriptor for tests and the composer integration.
+ * Guarantees trimmed body and no client-supplied sender_id.
+ */
+export function buildSendMessageCall(
+  conversationId: number,
+  draft: string
+): { path: string; body: { body: string } } {
+  return {
+    path: conversationMessagesPath(conversationId),
+    body: sendMessageRequestBody(draft),
+  };
+}
+
+/** After a successful API response: append server message and clear draft/error. */
+export function applySuccessfulSend(
+  messages: ConversationMessage[],
+  sent: ConversationMessage
+): { messages: ConversationMessage[]; draft: string; error: string; success: string } {
+  return {
+    messages: appendSentMessage(messages, sent),
+    draft: '',
+    error: '',
+    success: 'Message sent.',
+  };
+}
+
+/** On failure: keep the typed draft and surface the error. */
+export function applyFailedSend(
+  draft: string,
+  error: unknown
+): { draft: string; error: string; success: string } {
+  return {
+    draft,
+    error: sendMessageErrorMessage(error),
+    success: '',
+  };
 }
 
 export function sendMessageErrorMessage(error: unknown): string {

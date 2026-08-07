@@ -114,6 +114,39 @@ router.get(
 );
 
 /**
+ * Minimal current-thread load for the US-17 send workflow (US-17.6).
+ * Returns chronological messages for one conversation so the composer page
+ * remains usable after refresh. Broader history UX remains US-18.
+ */
+router.get(
+  '/:id/messages',
+  asyncHandler(async (req, res) => {
+    const conversationId = Number(req.params.id);
+    if (!Number.isInteger(conversationId) || conversationId <= 0) {
+      return res.status(400).json({ error: 'Invalid conversation id' });
+    }
+
+    const conversation = await Conversation.findById(conversationId);
+    if (!conversation) {
+      return res.status(404).json({ error: 'Conversation not found' });
+    }
+
+    if (!isConversationParticipant(conversation, req.user!.id)) {
+      return res.status(403).json({
+        error: 'Only conversation participants may view messages in this conversation',
+      });
+    }
+
+    const messages = await Message.find({ conversation_id: conversationId }).sort({
+      created_at: 1,
+      _id: 1,
+    });
+
+    return res.json(messages.map((message) => toMessageRow(message)));
+  })
+);
+
+/**
  * US-17.4 / US-17.5 — send a message in a conversation.
  *
  * Body: { body }. Sender is always req.user.id (client sender_id is ignored).
