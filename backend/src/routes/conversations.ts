@@ -10,6 +10,11 @@ import {
   toConversationRow,
 } from '../models/Conversation';
 import { Listing } from '../models/Listing';
+import {
+  Message,
+  normalizeMessageBody,
+  toMessageRow,
+} from '../models/Message';
 import { RentalRequest } from '../models/RentalRequest';
 import { User } from '../models/User';
 import { asyncHandler } from '../utils/asyncHandler';
@@ -104,6 +109,57 @@ router.get(
     }
 
     return res.json(await enrichConversation(conversation, req.user!.id));
+  })
+);
+
+/**
+ * US-17.4 — send a message in a conversation.
+ *
+ * Body: { body }. Sender is always req.user.id (client sender_id is ignored).
+ * Full participant / blank / length authorization rules are completed in US-17.5;
+ * this route confirms the conversation exists and relies on Message model
+ * normalization for basic body validation.
+ */
+router.post(
+  '/:id/messages',
+  asyncHandler(async (req, res) => {
+    const conversationId = Number(req.params.id);
+    if (!Number.isInteger(conversationId) || conversationId <= 0) {
+      return res.status(400).json({ error: 'Invalid conversation id' });
+    }
+
+    const conversation = await Conversation.findById(conversationId);
+    if (!conversation) {
+      return res.status(404).json({ error: 'Conversation not found' });
+    }
+
+    const { body } = req.body as { body?: unknown };
+
+    if (body === undefined || body === null) {
+      return res.status(400).json({ error: 'body is required' });
+    }
+
+    let normalizedBody: string;
+    try {
+      normalizedBody = normalizeMessageBody(body);
+    } catch (error) {
+      return res.status(400).json({
+        error: error instanceof Error ? error.message : 'Invalid message body',
+      });
+    }
+
+    const senderId = req.user!.id;
+    const created = await Message.create({
+      _id: await nextId('messages'),
+      conversation_id: conversation._id,
+      sender_id: senderId,
+      body: normalizedBody,
+    });
+
+    conversation.updated_at = new Date();
+    await conversation.save();
+
+    return res.status(201).json(toMessageRow(created));
   })
 );
 
