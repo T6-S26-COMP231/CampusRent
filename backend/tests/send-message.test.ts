@@ -20,10 +20,13 @@ let Conversation: typeof import('../src/models/Conversation').Conversation;
 let conversationIdentity: typeof import('../src/models/Conversation').conversationIdentity;
 let Message: typeof import('../src/models/Message').Message;
 
+let MESSAGE_MAX_LENGTH: typeof import('../src/models/Message').MESSAGE_MAX_LENGTH;
+
 let server: Server;
 let baseUrl: string;
 let ownerId: number;
 let renterId: number;
+let outsiderId: number;
 let listingId: number;
 let conversationId: number;
 
@@ -80,7 +83,7 @@ before(async () => {
   ({ User } = await import('../src/models/User'));
   ({ Listing } = await import('../src/models/Listing'));
   ({ Conversation, conversationIdentity } = await import('../src/models/Conversation'));
-  ({ Message } = await import('../src/models/Message'));
+  ({ Message, MESSAGE_MAX_LENGTH } = await import('../src/models/Message'));
   await connectDatabase(uri);
   await Conversation.syncIndexes();
   await Message.syncIndexes();
@@ -94,6 +97,7 @@ beforeEach(async () => {
   await clearDatabase();
   ownerId = await createStudent('owner@mycentennialcollege.ca', 'Owner', 'Student');
   renterId = await createStudent('renter@mycentennialcollege.ca', 'Renter', 'Student');
+  outsiderId = await createStudent('outsider@mycentennialcollege.ca', 'Other', 'Student');
   listingId = await createListing(ownerId);
   conversationId = await createConversation(listingId, ownerId, renterId);
 });
@@ -236,5 +240,157 @@ describe('US-17.4 send-message API endpoint', () => {
     );
     assert.equal(missingBody.status, 400);
     assert.match(String(missingBody.data.error), /body/i);
+  });
+});
+
+describe('US-17.5 participant authorization and message validation', () => {
+  test('conversation participant can send', async () => {
+    const response = await api(baseUrl, 'POST', `/api/conversations/${conversationId}/messages`, {
+      token: tokenFor(renterId, 'renter@mycentennialcollege.ca'),
+      body: { body: 'Participant send' },
+    });
+    assert.equal(response.status, 201);
+    assert.equal(response.data.sender_id, renterId);
+  });
+
+  test('second participant can send', async () => {
+    const response = await api(baseUrl, 'POST', `/api/conversations/${conversationId}/messages`, {
+      token: tokenFor(ownerId, 'owner@mycentennialcollege.ca'),
+      body: { body: 'Owner reply' },
+    });
+    assert.equal(response.status, 201);
+    assert.equal(response.data.sender_id, ownerId);
+  });
+
+  test('unrelated verified user receives 403 and nothing is persisted', async () => {
+    const beforeCount = await Message.countDocuments();
+    const response = await api(baseUrl, 'POST', `/api/conversations/${conversationId}/messages`, {
+      token: tokenFor(outsiderId, 'outsider@mycentennialcollege.ca'),
+      body: { body: 'Should be denied' },
+    });
+
+    assert.equal(response.status, 403);
+    assert.match(String(response.data.error), /participants may send/i);
+    assert.equal(await Message.countDocuments(), beforeCount);
+  });
+
+  test('sender_id spoofing in body is ignored', async () => {
+    const response = await api(baseUrl, 'POST', `/api/conversations/${conversationId}/messages`, {
+      token: tokenFor(renterId, 'renter@mycentennialcollege.ca'),
+      body: {
+        body: 'Spoof attempt',
+        sender_id: outsiderId,
+        participant_ids: [outsiderId, ownerId],
+      },
+    });
+
+    assert.equal(response.status, 201);
+    assert.equal(response.data.sender_id, renterId);
+    assert.equal((await Message.findById(response.data.id))!.sender_id, renterId);
+  });
+
+  test('blank body is rejected and not persisted', async () => {
+    const response = await api(baseUrl, 'POST', `/api/conversations/${conversationId}/messages`, {
+      token: tokenFor(renterId, 'renter@mycentennialcollege.ca'),
+      body: { body: '' },
+    });
+    assert.equal(response.status, 400);
+    assert.match(String(response.data.error), /blank|required/i);
+    assert.equal(await Message.countDocuments(), 0);
+  });
+
+  test('whitespace-only body is rejected and not persisted', async () => {
+    const response = await api(baseUrl, 'POST', `/api/conversations/${conversationId}/messages`, {
+      token: tokenFor(renterId, 'renter@mycentennialcollege.ca'),
+      body: { body: '   \n\t  ' },
+    });
+    assert.equal(response.status, 400);
+    assert.match(String(response.data.error), /blank/i);
+    assert.equal(await Message.countDocuments(), 0);
+  });
+
+  test('non-string body is rejected and not persisted', async () => {
+    const response = await api(baseUrl, 'POST', `/api/conversations/${conversationId}/messages`, {
+      token: tokenFor(renterId, 'renter@mycentennialcollege.ca'),
+      body: { body: { text: 'object' } },
+    });
+    assert.equal(response.status, 400);
+    assert.match(String(response.data.error), /string/i);
+    assert.equal(await Message.countDocuments(), 0);
+  });
+
+  test('over-2000-character body is rejected without truncation', async () => {
+    const oversized = 'x'.repeat(MESSAGE_MAX_LENGTH + 1);
+    const response = await api(baseUrl, 'POST', `/api/conversations/${conversationId}/messages`, {
+      token: tokenFor(renterId, 'renter@mycentennialcollege.ca'),
+      body: { body: oversized },
+    });
+    assert.equal(response.status, 400);
+    assert.match(String(response.data.error), /2000|exceed/i);
+    assert.equal(await Message.countDocuments(), 0);
+  });
+
+  test('exactly 2000 characters are accepted', async () => {
+    const exact = 'y'.repeat(MESSAGE_MAX_LENGTH);
+    const response = await api(baseUrl, 'POST', `/api/conversations/${conversationId}/messages`, {
+      token: tokenFor(ownerId, 'owner@mycentennialcollege.ca'),
+      body: { body: exact },
+    });
+    assert.equal(response.status, 201);
+    assert.equal(response.data.body.length, MESSAGE_MAX_LENGTH);
+    assert.equal((await Message.findById(response.data.id))!.body, exact);
+  });
+
+  test('leading and trailing whitespace is trimmed before persistence', async () => {
+    const response = await api(baseUrl, 'POST', `/api/conversations/${conversationId}/messages`, {
+      token: tokenFor(renterId, 'renter@mycentennialcollege.ca'),
+      body: { body: '  trimmed body  ' },
+    });
+    assert.equal(response.status, 201);
+    assert.equal(response.data.body, 'trimmed body');
+    assert.equal((await Message.findById(response.data.id))!.body, 'trimmed body');
+  });
+
+  test('conversation updated_at changes after a valid message', async () => {
+    const before = await Conversation.findById(conversationId);
+    assert.ok(before);
+    const previousUpdatedAt = before!.updated_at.getTime();
+
+    await new Promise((resolve) => setTimeout(resolve, 5));
+
+    const response = await api(baseUrl, 'POST', `/api/conversations/${conversationId}/messages`, {
+      token: tokenFor(ownerId, 'owner@mycentennialcollege.ca'),
+      body: { body: 'Updates conversation timestamp' },
+    });
+    assert.equal(response.status, 201);
+
+    const after = await Conversation.findById(conversationId);
+    assert.ok(after!.updated_at.getTime() >= previousUpdatedAt);
+    assert.notEqual(after!.updated_at.getTime(), previousUpdatedAt);
+  });
+
+  test('failed message does not create a Message document; valid messages remain persisted', async () => {
+    const valid = await api(baseUrl, 'POST', `/api/conversations/${conversationId}/messages`, {
+      token: tokenFor(renterId, 'renter@mycentennialcollege.ca'),
+      body: { body: 'Keep this one' },
+    });
+    assert.equal(valid.status, 201);
+
+    const failed = await api(baseUrl, 'POST', `/api/conversations/${conversationId}/messages`, {
+      token: tokenFor(outsiderId, 'outsider@mycentennialcollege.ca'),
+      body: { body: 'Denied' },
+    });
+    assert.equal(failed.status, 403);
+
+    const blank = await api(baseUrl, 'POST', `/api/conversations/${conversationId}/messages`, {
+      token: tokenFor(renterId, 'renter@mycentennialcollege.ca'),
+      body: { body: '   ' },
+    });
+    assert.equal(blank.status, 400);
+
+    const messages = await Message.find({ conversation_id: conversationId }).lean();
+    assert.equal(messages.length, 1);
+    assert.equal(messages[0].body, 'Keep this one');
+    assert.equal(messages[0]._id, valid.data.id);
   });
 });

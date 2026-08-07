@@ -74,6 +74,16 @@ export function createApp() {
       return res.status(400).json({ error: err.message });
     }
 
+    // User-input schema failures are client errors, not database outages.
+    if (
+      err instanceof mongoose.Error.ValidationError ||
+      err instanceof mongoose.Error.CastError ||
+      err.name === 'ValidationError' ||
+      err.name === 'CastError'
+    ) {
+      return res.status(400).json({ error: err.message });
+    }
+
     const isDatabaseError =
       err.name === 'MongoServerError' ||
       err.name === 'MongoNetworkError' ||
