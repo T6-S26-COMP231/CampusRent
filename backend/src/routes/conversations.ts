@@ -114,9 +114,17 @@ router.get(
 );
 
 /**
- * Minimal current-thread load for the US-17 send workflow (US-17.6).
- * Returns chronological messages for one conversation so the composer page
- * remains usable after refresh. Broader history UX remains US-18.
+ * US-18.3 — conversation-history API (reuses US-17.6 GET).
+ *
+ * GET /api/conversations/:id/messages is the single history endpoint for an
+ * open conversation. It returns persisted Message rows for that conversation
+ * only — never fabricated — so history survives later GETs, navigation, and
+ * refresh. Response shape matches toMessageRow / frontend Message:
+ *   { id, conversation_id, sender_id, body, created_at }
+ *
+ * Participant checks and chronological sort are inherited from US-17 and must
+ * not be weakened here. New authorization / ordering work belongs to US-18.4.
+ * Do not add a second competing history route.
  */
 router.get(
   '/:id/messages',
