@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { authenticate, requireVerifiedStudent } from '../middleware/auth';
 import { nextId } from '../models/Counter';
+import { Listing } from '../models/Listing';
 import {
   Report,
   isReportTargetType,
@@ -8,20 +9,23 @@ import {
   normalizeReportReason,
   toReportRow,
 } from '../models/Report';
+import { User } from '../models/User';
 import { asyncHandler } from '../utils/asyncHandler';
 
 const router = Router();
 router.use(authenticate, requireVerifiedStudent);
 
 /**
- * US-20.4 — submit-report API.
+ * US-20.4 / US-20.5 — submit-report API.
  *
  * POST /api/reports
  * Body: { target_type, target_id, reason, details }
  * Reporter is always req.user.id (client reporter_id is ignored).
  *
- * Basic malformed/missing checks live here. Target existence, self-report,
- * and any future approved category rules belong to US-20.5.
+ * US-20.5 adds target existence checks against the correct collection for
+ * target_type, plus complete malformed-field handling. Reason remains required
+ * free text — GitHub #147 / TAC define no approved category list. No invented
+ * self-report, duplicate, or details max-length rules.
  *
  * File name avoids backend/src/routes/reports.ts, which Iteration 1 verify
  * still treats as a forbidden placeholder path.
@@ -48,6 +52,9 @@ router.post(
 
     if (target_id === undefined || target_id === null || target_id === '') {
       return res.status(400).json({ error: 'target_id is required' });
+    }
+    if (typeof target_id === 'boolean') {
+      return res.status(400).json({ error: 'target_id must be a positive integer' });
     }
     const targetId = Number(target_id);
     if (!Number.isInteger(targetId) || targetId <= 0) {
@@ -77,6 +84,19 @@ router.post(
       return res.status(400).json({
         error: error instanceof Error ? error.message : 'Invalid report payload',
       });
+    }
+
+    // Target existence is checked against the collection matching target_type only.
+    if (target_type === 'user') {
+      const user = await User.findById(targetId).select('_id').lean();
+      if (!user) {
+        return res.status(404).json({ error: 'User not found' });
+      }
+    } else {
+      const listing = await Listing.findById(targetId).select('_id').lean();
+      if (!listing) {
+        return res.status(404).json({ error: 'Listing not found' });
+      }
     }
 
     const reporterId = req.user!.id;
