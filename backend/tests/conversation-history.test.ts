@@ -2,8 +2,9 @@
  * US-18.3 — conversation-history API contract.
  *
  * Reuses GET /api/conversations/:id/messages (US-17.6). No second history route.
- * Focuses on persisted history retrieval and response fields. New participant
- * authorization and chronological-order redesign belong to US-18.4.
+ * Focuses on persisted history retrieval and response fields.
+ * Participant authorization and chronological ordering are covered in
+ * conversation-history-auth-order.test.ts (US-18.4).
  */
 import assert from 'node:assert/strict';
 import { after, before, beforeEach, describe, test } from 'node:test';
