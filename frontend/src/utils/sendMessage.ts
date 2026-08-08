@@ -200,11 +200,15 @@ export function sortMessagesChronologically(
 /**
  * After a successful send response, append the server message and keep order.
  * Does not invent messages — caller must pass the API-returned row.
+ * Skips insert when the same message id is already in the thread (US-18.5).
  */
 export function appendSentMessage(
   messages: ConversationMessage[],
   sent: ConversationMessage
 ): ConversationMessage[] {
+  if (messages.some((message) => message.id === sent.id)) {
+    return sortMessagesChronologically(messages);
+  }
   return sortMessagesChronologically([...messages, sent]);
 }
 

@@ -85,6 +85,11 @@ messageSchema.pre('validate', function () {
 export const Message =
   mongoose.models.Message || mongoose.model<MessageDoc>('Message', messageSchema);
 
+/**
+ * US-17 send + US-18.3 history API response contract.
+ * Frontend Message type expects exactly these fields (ISO created_at).
+ * Sender display names are resolved from conversation counterpart data, not here.
+ */
 export function toMessageRow(message: MessageDoc) {
   return {
     id: message._id,

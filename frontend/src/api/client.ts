@@ -161,8 +161,8 @@ export const api = {
     }),
 
   /**
-   * Minimal current-conversation message load for the US-17 send workflow.
-   * Full history UX belongs to US-18; this only returns the active thread.
+   * US-17.6 / US-18.5 — load persisted conversation history for the open thread.
+   * Same GET /api/conversations/:id/messages contract; no second history method.
    */
   getConversationMessages: (conversationId: number): Promise<Message[]> =>
     request<Message[]>(`/conversations/${conversationId}/messages`),

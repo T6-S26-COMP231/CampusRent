@@ -114,9 +114,22 @@ router.get(
 );
 
 /**
- * Minimal current-thread load for the US-17 send workflow (US-17.6).
- * Returns chronological messages for one conversation so the composer page
- * remains usable after refresh. Broader history UX remains US-18.
+ * US-18.3 / US-18.4 — conversation-history API (reuses US-17.6 GET).
+ *
+ * Single history endpoint: GET /api/conversations/:id/messages.
+ * Response shape (toMessageRow): { id, conversation_id, sender_id, body, created_at }.
+ *
+ * US-18.4 authorization (unchanged from US-17; do not weaken):
+ *   authenticate + requireVerifiedStudent on the router; conversation must exist;
+ *   req.user.id must be participant_low_id or participant_high_id; non-participants
+ *   get 403. Client body/query cannot grant access — only the authenticated user id
+ *   and the conversation’s stored participant pair are consulted.
+ *
+ * US-18.4 chronological order (server-side, unchanged from US-17):
+ *   oldest → newest via .sort({ created_at: 1, _id: 1 }). Equal timestamps break
+ *   ties by ascending numeric _id. Reads do not mutate stored messages.
+ *
+ * Do not add a second competing history route.
  */
 router.get(
   '/:id/messages',
