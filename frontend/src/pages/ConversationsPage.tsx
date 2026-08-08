@@ -1,17 +1,26 @@
 import { useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useLocation } from 'react-router-dom';
 import { MessageCircle } from 'lucide-react';
 import { api, ConversationSummary } from '../api/client';
 import {
-  conversationCounterpartName,
   conversationDetailRoute,
-  conversationListingTitle,
-  conversationPreviewText,
+  conversationListItemClassName,
+  conversationListPreview,
   conversationsEmptyMessage,
   formatConversationTime,
-} from '../utils/conversations';
+  isActiveConversation,
+  toActiveConversationIdentity,
+} from '../utils/conversationHistory';
+
+interface ConversationsLocationState {
+  activeConversationId?: number;
+}
 
 export default function ConversationsPage() {
+  const location = useLocation();
+  const activeConversationId = (location.state as ConversationsLocationState | null)
+    ?.activeConversationId;
+
   const [conversations, setConversations] = useState<ConversationSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -37,7 +46,7 @@ export default function ConversationsPage() {
           Conversations
         </h1>
         <p className="mt-2 text-slate-500">
-          Active conversations with listing owners and renters. Message sending arrives in a later update.
+          Open a conversation to view history and continue messaging with listing owners and renters.
         </p>
       </div>
 
@@ -66,30 +75,35 @@ export default function ConversationsPage() {
         </div>
       ) : (
         <div className="mt-8 space-y-3">
-          {conversations.map((conversation) => (
-            <Link
-              key={conversation.id}
-              to={conversationDetailRoute(conversation.id)}
-              className="card block transition hover:-translate-y-0.5 hover:shadow-card-hover"
-            >
-              <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-start">
-                <div>
-                  <h2 className="font-display text-lg font-bold text-slate-900">
-                    {conversationCounterpartName(conversation)}
-                  </h2>
-                  <p className="mt-1 text-sm font-medium text-slate-600">
-                    {conversationListingTitle(conversation)}
-                  </p>
-                  <p className="mt-3 text-sm text-slate-500">
-                    {conversationPreviewText(conversation)}
+          {conversations.map((conversation) => {
+            const identity = toActiveConversationIdentity(conversation);
+            const active = isActiveConversation(conversation.id, activeConversationId);
+            return (
+              <Link
+                key={conversation.id}
+                to={conversationDetailRoute(conversation.id)}
+                className={conversationListItemClassName(active)}
+                aria-current={active ? 'page' : undefined}
+              >
+                <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-start">
+                  <div>
+                    <h2 className="font-display text-lg font-bold text-slate-900">
+                      {identity.counterpartName}
+                    </h2>
+                    <p className="mt-1 text-sm font-medium text-slate-600">
+                      {identity.listingTitle}
+                    </p>
+                    <p className="mt-3 text-sm text-slate-500">
+                      {conversationListPreview(conversation)}
+                    </p>
+                  </div>
+                  <p className="shrink-0 text-xs font-semibold uppercase tracking-wide text-slate-400">
+                    {formatConversationTime(conversation.updated_at || conversation.created_at)}
                   </p>
                 </div>
-                <p className="shrink-0 text-xs font-semibold uppercase tracking-wide text-slate-400">
-                  {formatConversationTime(conversation.updated_at || conversation.created_at)}
-                </p>
-              </div>
-            </Link>
-          ))}
+              </Link>
+            );
+          })}
         </div>
       )}
     </div>

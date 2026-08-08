@@ -2,30 +2,25 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { ArrowLeft, MessageCircle } from 'lucide-react';
 import { api, ConversationSummary } from '../api/client';
+import ConversationHistoryThread from '../components/ConversationHistoryThread';
 import MessageComposer from '../components/MessageComposer';
 import { useAuth } from '../context/AuthContext';
 import {
-  conversationCounterpartName,
   conversationListRoute,
-  conversationListingTitle,
   formatConversationTime,
-} from '../utils/conversations';
-import {
-  EMPTY_THREAD_MESSAGE,
-  appendSentMessage,
-  formatMessageTime,
-  isConversationParticipant,
-  messageBubbleClassName,
-  messageBubbleSide,
-  messageRowClassName,
-  sortMessagesChronologically,
+  historyHeaderEyebrow,
+  historyHeaderSubtitle,
+  historyHeaderTitle,
+  historyLoadErrorMessage,
+  prepareHistoryMessages,
+  toActiveConversationIdentity,
   type ConversationMessage,
-} from '../utils/sendMessage';
+} from '../utils/conversationHistory';
+import { appendSentMessage, isConversationParticipant } from '../utils/sendMessage';
 
 /**
- * US-16 conversation shell + US-17 send workflow.
- * Loads the current thread (minimal GET) so sent messages survive refresh;
- * broader history UX remains US-18.
+ * US-17 send workflow + US-18.2 conversation history interface.
+ * Continues using the existing participant-only GET messages endpoint.
  */
 export default function ConversationDetailPage() {
   const { id } = useParams();
@@ -55,11 +50,11 @@ export default function ConversationDetailPage() {
       .then(([detail, thread]) => {
         if (cancelled) return;
         setConversation(detail);
-        setMessages(sortMessagesChronologically(thread));
+        setMessages(prepareHistoryMessages(thread));
       })
       .catch((err) => {
         if (cancelled) return;
-        setError(err instanceof Error ? err.message : 'Unable to open conversation');
+        setError(historyLoadErrorMessage(err));
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
@@ -71,13 +66,14 @@ export default function ConversationDetailPage() {
   }, [id]);
 
   const orderedMessages = useMemo(
-    () => sortMessagesChronologically(messages),
+    () => prepareHistoryMessages(messages),
     [messages]
   );
 
   const viewerId = user?.id;
   const participantIds = conversation?.participant_ids;
   const canCompose = isConversationParticipant(viewerId, participantIds);
+  const identity = conversation ? toActiveConversationIdentity(conversation) : null;
 
   const handleMessageSent = (sent: ConversationMessage) => {
     setMessages((current) => appendSentMessage(current, sent));
@@ -86,7 +82,8 @@ export default function ConversationDetailPage() {
   if (loading) {
     return (
       <div className="mx-auto max-w-3xl px-4 py-12 sm:px-6">
-        <div className="h-64 animate-pulse rounded-3xl bg-slate-200" />
+        <div className="mb-6 h-5 w-40 animate-pulse rounded bg-slate-200" />
+        <div className="h-72 animate-pulse rounded-3xl bg-slate-200" />
       </div>
     );
   }
@@ -95,6 +92,7 @@ export default function ConversationDetailPage() {
     <div className="mx-auto max-w-3xl px-4 py-10 sm:px-6">
       <Link
         to={conversationListRoute()}
+        state={conversation ? { activeConversationId: conversation.id } : undefined}
         className="mb-6 inline-flex items-center gap-2 text-sm font-semibold text-campus-700 hover:text-campus-900"
       >
         <ArrowLeft className="h-4 w-4" /> Back to conversations
@@ -106,7 +104,7 @@ export default function ConversationDetailPage() {
         </div>
       )}
 
-      {conversation && !error && (
+      {conversation && identity && !error && (
         <section className="card">
           <div className="flex items-start gap-3">
             <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-campus-50 text-campus-700">
@@ -114,13 +112,13 @@ export default function ConversationDetailPage() {
             </div>
             <div>
               <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">
-                Conversation
+                {historyHeaderEyebrow()}
               </p>
               <h1 className="mt-1 font-display text-2xl font-extrabold text-slate-950">
-                {conversationCounterpartName(conversation)}
+                {historyHeaderTitle(identity)}
               </h1>
               <p className="mt-2 text-sm text-slate-600">
-                Listing: {conversationListingTitle(conversation)}
+                {historyHeaderSubtitle(identity)}
               </p>
               <p className="mt-1 text-xs text-slate-400">
                 Updated {formatConversationTime(conversation.updated_at || conversation.created_at)}
@@ -128,31 +126,11 @@ export default function ConversationDetailPage() {
             </div>
           </div>
 
-          <div
-            className="mt-6 flex max-h-[28rem] min-h-[14rem] flex-col gap-3 overflow-y-auto rounded-xl border border-slate-200 bg-slate-50 p-4"
-            aria-live="polite"
-          >
-            {orderedMessages.length === 0 ? (
-              <div className="m-auto px-4 py-8 text-center text-sm text-slate-500">
-                <p className="font-semibold text-slate-700">{EMPTY_THREAD_MESSAGE}</p>
-                <p className="mt-2">Write a message below to start the conversation.</p>
-              </div>
-            ) : (
-              orderedMessages.map((message) => {
-                const side = messageBubbleSide(message, viewerId);
-                return (
-                  <div key={message.id} className={messageRowClassName(side)}>
-                    <div className={messageBubbleClassName(side)}>
-                      <p className="whitespace-pre-wrap break-words">{message.body}</p>
-                    </div>
-                    <p className="mt-1 px-1 text-[11px] font-medium text-slate-400">
-                      {formatMessageTime(message.created_at)}
-                    </p>
-                  </div>
-                );
-              })
-            )}
-          </div>
+          <ConversationHistoryThread
+            messages={orderedMessages}
+            viewerId={viewerId}
+            counterpartName={identity.counterpartName}
+          />
 
           {canCompose ? (
             <MessageComposer
