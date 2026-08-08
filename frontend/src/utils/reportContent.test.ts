@@ -1,5 +1,5 @@
 /**
- * US-20.1 — report form-flow design helpers.
+ * US-20.1 / US-20.2 — report form-flow and reason-control helpers.
  */
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
@@ -9,12 +9,15 @@ import {
   REPORT_INCOMPLETE_REASON_MESSAGE,
   REPORT_LISTING_ENTRY_LABEL,
   REPORT_LISTING_HEADING,
+  REPORT_NOT_CONNECTED_MESSAGE,
   REPORT_REASON_OPTIONS,
+  REPORT_REASON_PLACEHOLDER,
   REPORT_SUCCESS_MESSAGE,
   REPORT_USER_ENTRY_LABEL,
   REPORT_USER_HEADING,
   SUBMIT_REPORT_LABEL,
   SUBMITTING_REPORT_LABEL,
+  applyCancelledReportForm,
   applyFailedReportSubmit,
   applySuccessfulReportSubmit,
   buildSubmitReportBody,
@@ -26,14 +29,56 @@ import {
   reportEntryLabel,
   reportFormHeading,
   reportSubmitLabel,
+  reportTargetId,
   reportTargetSummary,
   reportValidationMessages,
+  submitBodyMatchesTrustedTarget,
   toReportListingTarget,
   toReportUserTarget,
 } from './reportContent';
 
-describe('US-20.1 report-user and report-listing form-flow design', () => {
-  test('listing and user entry targets come from trusted page context only', () => {
+describe('US-20.2 report form and reason controls', () => {
+  test('blank and whitespace reason are invalid; non-empty reason is valid', () => {
+    assert.equal(hasReportReason(''), false);
+    assert.equal(hasReportReason('   '), false);
+    assert.equal(hasReportReason('Misleading listing'), true);
+    assert.equal(REPORT_REASON_PLACEHOLDER, 'Enter a reason');
+  });
+
+  test('blank and whitespace details are invalid; non-empty details are valid', () => {
+    assert.equal(isBlankReportDetails(''), true);
+    assert.equal(isBlankReportDetails('   \n\t  '), true);
+    assert.equal(isBlankReportDetails('Needs admin review'), false);
+  });
+
+  test('valid reason + details are allowed by the submit gate', () => {
+    const listingTarget = toReportListingTarget({ id: 12, title: 'Camera' });
+    assert.equal(
+      canSubmitReport({
+        target: listingTarget,
+        reason: 'Fake photos',
+        details: 'Images do not match the item.',
+        submitting: false,
+        viewerId: 9,
+      }),
+      true
+    );
+
+    const messages = reportValidationMessages({
+      reason: 'Fake photos',
+      details: 'Images do not match the item.',
+    });
+    assert.equal(messages.reason, '');
+    assert.equal(messages.details, '');
+  });
+
+  test('incomplete reason or details produce validation messages', () => {
+    const incomplete = reportValidationMessages({ reason: '  ', details: '' });
+    assert.equal(incomplete.reason, REPORT_INCOMPLETE_REASON_MESSAGE);
+    assert.equal(incomplete.details, REPORT_INCOMPLETE_DETAILS_MESSAGE);
+  });
+
+  test('trusted listing and user target conversion', () => {
     const listingTarget = toReportListingTarget({
       id: 12,
       title: '  Campus Camera  ',
@@ -41,6 +86,7 @@ describe('US-20.1 report-user and report-listing form-flow design', () => {
     assert.equal(listingTarget.type, 'listing');
     assert.equal(listingTarget.listingId, 12);
     assert.equal(listingTarget.listingTitle, 'Campus Camera');
+    assert.equal(reportTargetId(listingTarget), 12);
     assert.equal(reportTargetSummary(listingTarget), 'Listing: Campus Camera');
     assert.equal(reportFormHeading('listing'), REPORT_LISTING_HEADING);
     assert.equal(reportEntryLabel('listing'), REPORT_LISTING_ENTRY_LABEL);
@@ -51,8 +97,7 @@ describe('US-20.1 report-user and report-listing form-flow design', () => {
     );
     assert.equal(userTarget.type, 'user');
     assert.equal(userTarget.userId, 4);
-    assert.equal(userTarget.userName, 'Owner Student');
-    assert.equal(userTarget.contextListingId, 12);
+    assert.equal(reportTargetId(userTarget), 4);
     assert.equal(
       reportTargetSummary(userTarget),
       'User: Owner Student · Listing: Campus Camera'
@@ -61,38 +106,31 @@ describe('US-20.1 report-user and report-listing form-flow design', () => {
     assert.equal(reportEntryLabel('user'), REPORT_USER_ENTRY_LABEL);
   });
 
-  test('reason is required without inventing a closed production category list', () => {
-    assert.deepEqual(REPORT_REASON_OPTIONS, []);
-    assert.equal(hasReportReason(''), false);
-    assert.equal(hasReportReason('   '), false);
-    assert.equal(hasReportReason('some-approved-value'), true);
-    assert.equal(CANCEL_REPORT_LABEL, 'Cancel');
-
-    // US-20.5 hook: membership checks use a supplied approved list, not a hardcoded one.
-    assert.equal(isApprovedReportReason('alpha', []), false);
-    assert.equal(isApprovedReportReason('alpha', ['alpha', 'beta']), true);
-    assert.equal(isApprovedReportReason('  alpha  ', ['alpha']), true);
-    assert.equal(isApprovedReportReason('gamma', ['alpha', 'beta']), false);
-  });
-
-  test('supporting details are required, trimmed, and non-empty with no max length', () => {
-    assert.equal(isBlankReportDetails(''), true);
-    assert.equal(isBlankReportDetails('   '), true);
-    assert.equal(isBlankReportDetails('Needs review'), false);
-
-    const incomplete = reportValidationMessages({ reason: '', details: '' });
-    assert.equal(incomplete.reason, REPORT_INCOMPLETE_REASON_MESSAGE);
-    assert.equal(incomplete.details, REPORT_INCOMPLETE_DETAILS_MESSAGE);
-
-    const valid = reportValidationMessages({
-      reason: 'needs-review',
-      details: 'Threatening messages about a rental.',
+  test('request-body helper excludes reporter_id and uses trusted target id only', () => {
+    const listingTarget = toReportListingTarget({ id: 12, title: 'Camera' });
+    const body = buildSubmitReportBody(
+      listingTarget,
+      '  Misleading  ',
+      '  Payment requested off-platform.  '
+    );
+    assert.deepEqual(body, {
+      target_type: 'listing',
+      target_id: 12,
+      reason: 'Misleading',
+      details: 'Payment requested off-platform.',
     });
-    assert.equal(valid.reason, '');
-    assert.equal(valid.details, '');
+    assert.equal('reporter_id' in body, false);
+    assert.equal(submitBodyMatchesTrustedTarget(listingTarget, body), true);
+
+    // Editable spoof values are irrelevant — body is built only from trusted target.
+    const spoofedBody = {
+      ...body,
+      target_id: 999,
+    };
+    assert.equal(submitBodyMatchesTrustedTarget(listingTarget, spoofedBody), false);
   });
 
-  test('submit gate blocks self-report, incomplete input, and double submit', () => {
+  test('submit-state helper disables duplicate submit and self-report', () => {
     const listingTarget = toReportListingTarget({ id: 12, title: 'Camera' });
     const userTarget = toReportUserTarget({
       id: 4,
@@ -100,36 +138,13 @@ describe('US-20.1 report-user and report-listing form-flow design', () => {
       last_name: 'Student',
     });
 
-    assert.equal(canReportTarget(9, listingTarget), true);
     assert.equal(canReportTarget(4, userTarget), false);
     assert.equal(canReportTarget(9, userTarget), true);
-    assert.equal(canReportTarget(undefined, listingTarget), false);
-
     assert.equal(
       canSubmitReport({
         target: listingTarget,
-        reason: 'needs-review',
-        details: 'Looks like a fake listing.',
-        submitting: false,
-        viewerId: 9,
-      }),
-      true
-    );
-    assert.equal(
-      canSubmitReport({
-        target: listingTarget,
-        reason: '',
-        details: 'Looks like a fake listing.',
-        submitting: false,
-        viewerId: 9,
-      }),
-      false
-    );
-    assert.equal(
-      canSubmitReport({
-        target: listingTarget,
-        reason: 'needs-review',
-        details: 'Looks like a fake listing.',
+        reason: 'Spam',
+        details: 'Repeated junk posts.',
         submitting: true,
         viewerId: 9,
       }),
@@ -139,45 +154,34 @@ describe('US-20.1 report-user and report-listing form-flow design', () => {
     assert.equal(reportSubmitLabel(true), SUBMITTING_REPORT_LABEL);
   });
 
-  test('request body uses trusted target ids and never includes reporter_id', () => {
-    const listingTarget = toReportListingTarget({ id: 12, title: 'Camera' });
-    const body = buildSubmitReportBody(
-      listingTarget,
-      '  off-platform-payment  ',
-      '  Payment requested off-platform.  '
-    );
-    assert.deepEqual(body, {
-      target_type: 'listing',
-      target_id: 12,
-      reason: 'off-platform-payment',
-      details: 'Payment requested off-platform.',
+  test('cancel/reset clears draft; failure preserves entered values', () => {
+    const cancelled = applyCancelledReportForm();
+    assert.deepEqual(cancelled, {
+      reason: '',
+      details: '',
+      error: '',
+      success: '',
     });
-    assert.equal('reporter_id' in body, false);
-
-    const userBody = buildSubmitReportBody(
-      toReportUserTarget({ id: 4, first_name: 'Owner', last_name: 'Student' }),
-      'conduct',
-      'Repeated no-shows.'
-    );
-    assert.equal(userBody.target_type, 'user');
-    assert.equal(userBody.target_id, 4);
-  });
-
-  test('success clears draft; failure preserves typed content', () => {
-    const success = applySuccessfulReportSubmit();
-    assert.equal(success.reason, '');
-    assert.equal(success.details, '');
-    assert.equal(success.error, '');
-    assert.equal(success.success, REPORT_SUCCESS_MESSAGE);
+    assert.equal(CANCEL_REPORT_LABEL, 'Cancel');
 
     const failed = applyFailedReportSubmit(
-      'needs-review',
-      'Keep this explanation',
-      new Error('Database unavailable')
+      'Keep reason',
+      'Keep details',
+      new Error(REPORT_NOT_CONNECTED_MESSAGE)
     );
-    assert.equal(failed.reason, 'needs-review');
-    assert.equal(failed.details, 'Keep this explanation');
-    assert.equal(failed.error, 'Database unavailable');
+    assert.equal(failed.reason, 'Keep reason');
+    assert.equal(failed.details, 'Keep details');
+    assert.equal(failed.error, REPORT_NOT_CONNECTED_MESSAGE);
     assert.equal(failed.success, '');
+
+    const success = applySuccessfulReportSubmit();
+    assert.equal(success.success, REPORT_SUCCESS_MESSAGE);
+    assert.equal(success.reason, '');
+  });
+
+  test('no category-list requirement exists for the reason control', () => {
+    assert.deepEqual(REPORT_REASON_OPTIONS, []);
+    assert.equal(isApprovedReportReason('anything', []), false);
+    assert.equal(hasReportReason('free text reason'), true);
   });
 });

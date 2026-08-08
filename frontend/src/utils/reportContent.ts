@@ -19,20 +19,21 @@
  *       - ConversationDetailPage → conversation.counterpart.id
  *     Target id = counterpart/owner/renter id from that surface (never typed).
  *
- * Form layout (for US-20.2 implementation):
+ * Form layout (US-20.2 ReportContentForm):
  *   1. Heading — “Report listing” or “Report user”
  *   2. Target summary — title/name + trusted id context (read-only)
- *   3. Reason — required control (select or equivalent) using ReportReasonOption[]
+ *   3. Reason — required free-text <input className="input-field">
+ *      (no approved category list → do not use an empty <select>)
  *   4. Supporting details — required <textarea className="input-field">
  *   5. Actions — Submit (btn-primary) + Cancel/back (btn-secondary)
- *   Inline panel/modal on the initiating page (same pattern as decline/cancel
+ *   Inline panel on the initiating page (same pattern as decline/cancel
  *   confirms and MessageComposer), not a standalone /reports route.
  *
  * Reason/category:
  *   Required non-empty value after trim. No closed production category list is
- *   defined here — TAC/GitHub did not approve one. US-20.2 renders a reason
- *   control from ReportReasonOption[]; US-20.5 enforces whatever approved
- *   values are established later (see isApprovedReportReason).
+ *   defined here — TAC/GitHub did not approve one. Free-text reason until an
+ *   approved source exists. ReportReasonOption[] / isApprovedReportReason remain
+ *   for US-20.5 if a closed list is established later.
  *
  * Supporting details:
  *   Required, trimmed, non-empty. No maximum length is specified by TAC.
@@ -60,11 +61,16 @@ export const REPORT_USER_ENTRY_LABEL = 'Report user';
 export const SUBMIT_REPORT_LABEL = 'Submit report';
 export const SUBMITTING_REPORT_LABEL = 'Submitting...';
 export const CANCEL_REPORT_LABEL = 'Cancel';
-export const REPORT_REASON_PLACEHOLDER = 'Select a reason';
+export const REPORT_REASON_PLACEHOLDER = 'Enter a reason';
+export const REPORT_REASON_LABEL = 'Reason';
+export const REPORT_DETAILS_LABEL = 'Supporting details';
 export const REPORT_DETAILS_PLACEHOLDER =
   'Describe what happened and why this should be reviewed…';
 export const REPORT_SUCCESS_MESSAGE =
   'Report submitted. The System Administration Team will review it.';
+/** Shown when the form seam is called before US-20.6 wiring — not a fake save. */
+export const REPORT_NOT_CONNECTED_MESSAGE =
+  'Report submission is not available yet.';
 export const REPORT_INCOMPLETE_REASON_MESSAGE = 'A report reason is required.';
 export const REPORT_INCOMPLETE_DETAILS_MESSAGE =
   'Supporting details are required.';
@@ -292,7 +298,10 @@ export function applyFailedReportSubmit(
   };
 }
 
-/** On success: clear the form draft and show confirmation. */
+/**
+ * On a real successful save (US-20.6): clear the form draft and show confirmation.
+ * Do not call this from a stubbed / fake submit.
+ */
 export function applySuccessfulReportSubmit(): {
   reason: string;
   details: string;
@@ -305,4 +314,32 @@ export function applySuccessfulReportSubmit(): {
     error: '',
     success: reportSuccessMessage(),
   };
+}
+
+/** Cancel / dismiss the inline form — clear draft and feedback. */
+export function applyCancelledReportForm(): {
+  reason: string;
+  details: string;
+  error: string;
+  success: string;
+} {
+  return {
+    reason: '',
+    details: '',
+    error: '',
+    success: '',
+  };
+}
+
+/**
+ * Prove the submit body target comes from trusted ReportTarget context only.
+ * There is no editable target-id field on the form.
+ */
+export function submitBodyMatchesTrustedTarget(
+  target: ReportTarget,
+  body: SubmitReportBody
+): boolean {
+  return (
+    body.target_type === target.type && body.target_id === reportTargetId(target)
+  );
 }
