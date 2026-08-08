@@ -6,21 +6,24 @@ import ConversationHistoryThread from '../components/ConversationHistoryThread';
 import MessageComposer from '../components/MessageComposer';
 import { useAuth } from '../context/AuthContext';
 import {
+  appendHistoryAfterSend,
+  applyHistoryLoadFailure,
+  applyLoadedHistory,
   conversationListRoute,
   formatConversationTime,
   historyHeaderEyebrow,
   historyHeaderSubtitle,
   historyHeaderTitle,
-  historyLoadErrorMessage,
   prepareHistoryMessages,
   toActiveConversationIdentity,
   type ConversationMessage,
 } from '../utils/conversationHistory';
-import { appendSentMessage, isConversationParticipant } from '../utils/sendMessage';
+import { isConversationParticipant } from '../utils/sendMessage';
 
 /**
- * US-17 send workflow + US-18.2 conversation history interface.
- * Continues using the existing participant-only GET messages endpoint.
+ * US-17 send workflow + US-18.5 history integration.
+ * Loads persisted history via existing api.getConversationMessages
+ * (GET /api/conversations/:id/messages). No second history endpoint.
  */
 export default function ConversationDetailPage() {
   const { id } = useParams();
@@ -33,6 +36,8 @@ export default function ConversationDetailPage() {
   useEffect(() => {
     const conversationId = Number(id);
     if (!Number.isInteger(conversationId) || conversationId <= 0) {
+      setConversation(null);
+      setMessages([]);
       setError('Invalid conversation');
       setLoading(false);
       return;
@@ -41,6 +46,7 @@ export default function ConversationDetailPage() {
     let cancelled = false;
     setLoading(true);
     setError('');
+    setConversation(null);
     setMessages([]);
 
     Promise.all([
@@ -49,12 +55,17 @@ export default function ConversationDetailPage() {
     ])
       .then(([detail, thread]) => {
         if (cancelled) return;
+        const loaded = applyLoadedHistory(thread);
         setConversation(detail);
-        setMessages(prepareHistoryMessages(thread));
+        setMessages(loaded.messages);
+        setError(loaded.error);
       })
       .catch((err) => {
         if (cancelled) return;
-        setError(historyLoadErrorMessage(err));
+        const failed = applyHistoryLoadFailure(err);
+        setConversation(null);
+        setMessages(failed.messages);
+        setError(failed.error);
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
@@ -76,7 +87,7 @@ export default function ConversationDetailPage() {
   const identity = conversation ? toActiveConversationIdentity(conversation) : null;
 
   const handleMessageSent = (sent: ConversationMessage) => {
-    setMessages((current) => appendSentMessage(current, sent));
+    setMessages((current) => appendHistoryAfterSend(current, sent));
   };
 
   if (loading) {

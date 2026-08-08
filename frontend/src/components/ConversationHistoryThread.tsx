@@ -20,8 +20,8 @@ interface Props {
 }
 
 /**
- * US-18.2 — scrollable chronological history for the open conversation.
- * Presentational only; data loading stays on ConversationDetailPage (US-17 GET).
+ * US-18.2 / US-18.5 — scrollable chronological history for the open conversation.
+ * Presentational only; ConversationDetailPage loads via api.getConversationMessages.
  */
 export default function ConversationHistoryThread({
   messages,

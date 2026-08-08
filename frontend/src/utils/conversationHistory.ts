@@ -1,9 +1,9 @@
 /**
- * US-18.1 — conversation-list and history layout design.
+ * US-18.1 layout + US-18.5 history integration helpers.
  *
- * Builds on US-16 (list/shell) and US-17 (send + minimal participant-only GET
+ * Builds on US-16 (list/shell) and US-17 (send + participant-only GET
  * /api/conversations/:id/messages). Do not invent a second messages endpoint;
- * US-18.2–18.5 reuse that active-thread retrieval for history display.
+ * US-18.2–18.5 reuse api.getConversationMessages for history display.
  *
  * Conversation list (ConversationsPage — US-18.2):
  *   - Counterpart name (primary)
@@ -47,6 +47,8 @@ import {
 } from './conversations';
 import {
   EMPTY_THREAD_MESSAGE,
+  appendSentMessage,
+  conversationMessagesPath,
   formatMessageTime,
   messageBubbleClassName,
   messageBubbleSide,
@@ -66,6 +68,8 @@ export {
   formatConversationTime,
   NO_MESSAGES_PREVIEW,
   EMPTY_THREAD_MESSAGE,
+  appendSentMessage,
+  conversationMessagesPath,
   formatMessageTime,
   messageBubbleClassName,
   messageBubbleSide,
@@ -197,10 +201,84 @@ export function historyLoadErrorMessage(error: unknown): string {
 
 /**
  * Ordered history for the open conversation.
- * Reuses US-17 chronological sort (created_at, then id).
+ * Reuses US-17 chronological sort (created_at, then id). Defensive only —
+ * must not reverse a valid oldest→newest server payload.
  */
 export function prepareHistoryMessages(
   messages: ConversationMessage[]
 ): ConversationMessage[] {
   return sortMessagesChronologically(messages);
+}
+
+/** Same path as api.getConversationMessages — no second history endpoint. */
+export function conversationHistoryPath(conversationId: number): string {
+  return conversationMessagesPath(conversationId);
+}
+
+/** Pure GET-history request descriptor for integration tests. */
+export function buildConversationHistoryCall(conversationId: number): {
+  path: string;
+  conversationId: number;
+} {
+  return {
+    path: conversationHistoryPath(conversationId),
+    conversationId,
+  };
+}
+
+/**
+ * Map a server history array into UI state without fabricating rows.
+ * Preserves id, conversation_id, sender_id, body, and created_at.
+ */
+export function mapServerHistoryMessages(
+  messages: ConversationMessage[]
+): ConversationMessage[] {
+  return prepareHistoryMessages(
+    messages.map((message) => ({
+      id: message.id,
+      conversation_id: message.conversation_id,
+      sender_id: message.sender_id,
+      body: message.body,
+      created_at: message.created_at,
+    }))
+  );
+}
+
+/** Successful history load → thread state (empty array is a valid empty history). */
+export function applyLoadedHistory(messages: ConversationMessage[]): {
+  messages: ConversationMessage[];
+  error: string;
+} {
+  return {
+    messages: mapServerHistoryMessages(messages),
+    error: '',
+  };
+}
+
+/**
+ * Failed history/detail load — clear protected messages and surface API text
+ * (includes 403 participant denial and 404 not-found messages from the client).
+ */
+export function applyHistoryLoadFailure(error: unknown): {
+  messages: ConversationMessage[];
+  error: string;
+} {
+  return {
+    messages: [],
+    error: historyLoadErrorMessage(error),
+  };
+}
+
+/**
+ * After a successful send: keep loaded history, append the server-confirmed
+ * message, and skip duplicates when the same id is already present.
+ */
+export function appendHistoryAfterSend(
+  messages: ConversationMessage[],
+  sent: ConversationMessage
+): ConversationMessage[] {
+  if (messages.some((message) => message.id === sent.id)) {
+    return prepareHistoryMessages(messages);
+  }
+  return appendSentMessage(messages, sent);
 }
