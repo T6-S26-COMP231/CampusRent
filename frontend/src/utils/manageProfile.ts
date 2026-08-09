@@ -30,11 +30,11 @@
  *   - password_hash / password — never exposed or editable here
  *   - created_at — account metadata (optional display only)
  *
- * Profile UI flow (US-21.2 implements components):
+ * Profile UI flow (US-21.2 AccountPage):
  *   View mode → current editable values + read-only account/verification
  *   Edit profile → editable fields become inputs; Save / Cancel
  *   Cancel → discard draft (applyCancelledProfileEdit)
- *   Save later → validate → UPDATE API (US-21.3–21.5) → show updated values
+ *   Save (UI-only until US-21.5) → validate → truthful not-connected notice
  *
  * Validation reuses registration name rules (required non-empty after trim).
  * No invented phone format/length rules — schema allows empty string.
@@ -62,7 +62,7 @@ export const PROFILE_VERIFICATION_LABEL = 'Verification status';
 export const PROFILE_ACCOUNT_STATUS_LABEL = 'Account status';
 export const PROFILE_SUCCESS_MESSAGE = 'Profile saved successfully.';
 export const PROFILE_NOT_CONNECTED_MESSAGE =
-  'Profile updates are not connected yet.';
+  'Profile saving is not connected yet.';
 export const PROFILE_INCOMPLETE_FIRST_NAME_MESSAGE = 'First name is required.';
 export const PROFILE_INCOMPLETE_LAST_NAME_MESSAGE = 'Last name is required.';
 export const PROFILE_LOAD_ERROR_FALLBACK = 'Unable to load profile.';
@@ -338,6 +338,21 @@ export function profileUpdateBodyExcludesProtectedFields(
   );
 }
 
+/** Enter edit mode from the current profile view. */
+export function applyEnterProfileEdit(view: ProfileView): {
+  mode: ProfileMode;
+  draft: ProfileEditDraft;
+  errors: ProfileFieldErrors;
+  notice: string;
+} {
+  return {
+    mode: 'edit',
+    draft: toProfileEditDraft(view),
+    errors: { first_name: '', last_name: '', phone: '' },
+    notice: '',
+  };
+}
+
 /** Cancel edit — restore draft from the last viewed profile values. */
 export function applyCancelledProfileEdit(view: ProfileView): {
   mode: ProfileMode;
@@ -365,6 +380,58 @@ export function applyUnconnectedProfileSave(): {
     notice: PROFILE_NOT_CONNECTED_MESSAGE,
     success: '',
   };
+}
+
+/**
+ * US-21.2 — validate then apply the unconnected save path.
+ * Invalid drafts stay in edit mode with field errors and no success claim.
+ * Valid drafts produce an update body (editable fields only) and the
+ * truthful not-connected notice — no persistence.
+ */
+export function applyProfileFormSave(draft: ProfileEditDraft): {
+  mode: ProfileMode;
+  draft: ProfileEditDraft;
+  errors: ProfileFieldErrors;
+  notice: string;
+  success: string;
+  body: UpdateProfileBody | null;
+} {
+  const errors = profileValidationMessages(draft);
+  if (errors.first_name || errors.last_name || errors.phone) {
+    return {
+      mode: 'edit',
+      draft,
+      errors,
+      notice: '',
+      success: '',
+      body: null,
+    };
+  }
+
+  const body = buildUpdateProfileBody(draft);
+  const unconnected = applyUnconnectedProfileSave();
+  return {
+    mode: 'edit',
+    draft: {
+      first_name: body.first_name,
+      last_name: body.last_name,
+      phone: body.phone,
+    },
+    errors: { first_name: '', last_name: '', phone: '' },
+    notice: unconnected.notice,
+    success: unconnected.success,
+    body,
+  };
+}
+
+/** Field names the AccountPage edit form may render as inputs. */
+export function profileEditInputFields(): EditableProfileField[] {
+  return [...EDITABLE_PROFILE_FIELDS];
+}
+
+/** Read-only labels shown on AccountPage (never inputs). */
+export function profileReadOnlyDisplayFields(): ProtectedProfileField[] {
+  return ['email', 'verification_status', 'role', 'status', 'id', 'created_at'];
 }
 
 export function claimsProfileSavedSuccessfully(message: string): boolean {
