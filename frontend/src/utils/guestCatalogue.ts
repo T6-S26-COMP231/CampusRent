@@ -18,7 +18,8 @@
  *
  * Story boundary:
  *   US-01 = limited guest catalogue / search / registration prompts
- *   US-02 = basic guest item details (do not implement here)
+ *   US-02 = basic guest item details (design in guestItemDetails.ts;
+ *           do not implement the guest details page/API in this US-01 module)
  *
  * Existing repository facts (do not invent fields):
  *   Listing model (backend/src/models/Listing.ts):
