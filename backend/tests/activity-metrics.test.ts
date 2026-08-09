@@ -121,6 +121,13 @@ describe('US-24.1 activity filter normalization', () => {
       listing_category: 'Electronics',
     });
 
+    const allWithCategory = normalizeActivityFilters({
+      activity_scope: 'all',
+      listing_category: 'Electronics',
+    });
+    assert.equal(allWithCategory.error, '');
+    assert.equal(allWithCategory.filters.listing_category, 'Electronics');
+
     const inverted = normalizeActivityFilters({
       start_date: '2026-08-10',
       end_date: '2026-08-01',
@@ -131,6 +138,15 @@ describe('US-24.1 activity filter normalization', () => {
       listing_category: 'Spaceships',
     });
     assert.match(badCategory.error, /category/i);
+
+    const badScope = normalizeActivityFilters({ activity_scope: 'payments' });
+    assert.match(badScope.error, /Activity scope must be one of/i);
+
+    const incompatible = normalizeActivityFilters({
+      activity_scope: 'users',
+      listing_category: 'Electronics',
+    });
+    assert.match(incompatible.error, /listing_category can only be used/i);
   });
 });
 

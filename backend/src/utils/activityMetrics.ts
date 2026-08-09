@@ -34,9 +34,9 @@
  * RentalRequest.start_date / end_date are rental period fields — not the
  * activity-event timestamp for this report.
  *
- * Aggregation implementation: backend/src/utils/activityAggregation.ts (US-24.4).
- * Admin endpoint: GET /api/admin/activity.
- * Date/category filter enforcement: US-24.5 (#183).
+ * Aggregation implementation: backend/src/utils/activityAggregation.ts (US-24.4/5).
+ * Admin endpoint: GET /api/admin/activity (authenticate + requireAdmin).
+ * Query filters: start_date, end_date, activity_scope, listing_category (US-24.5).
  * Frontend integration: US-24.6 (#184).
  */
 
@@ -276,7 +276,12 @@ export interface ActivityReportFilters {
   start_date: string | null;
   end_date: string | null;
   activity_scope: ActivityScope;
-  /** When set, listing metrics are limited to this category. Other scopes ignore it. */
+  /**
+   * When set, listing metrics are limited to this category.
+   * Allowed only with activity_scope=all or activity_scope=listings.
+   * Under all, non-listing metrics stay global (no cross-collection joins).
+   * Incompatible single scopes (users, rental_requests, …) are rejected.
+   */
   listing_category: ActivityListingCategory | null;
 }
 
@@ -342,6 +347,15 @@ export const ACTIVITY_DATE_FORMAT_MESSAGE =
 
 export const ACTIVITY_DATE_RANGE_ORDER_MESSAGE =
   'Start date cannot be after end date.';
+
+export const ACTIVITY_SCOPE_INVALID_MESSAGE =
+  'Activity scope must be one of: all, users, listings, rental_requests, reports, reviews, messaging.';
+
+export const ACTIVITY_CATEGORY_INVALID_MESSAGE =
+  'Listing category filter is not supported.';
+
+export const ACTIVITY_CATEGORY_SCOPE_MESSAGE =
+  'listing_category can only be used with activity_scope=all or activity_scope=listings.';
 
 const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -440,6 +454,7 @@ export function normalizeActivityDateInput(raw: unknown): {
 /**
  * Build an inclusive UTC created_at range from calendar dates.
  * end_date covers the full UTC day (23:59:59.999).
+ * Aggregation may use an equivalent exclusive next-day upper bound.
  */
 export function activityDateRangeBounds(
   startDate: string | null,
@@ -457,6 +472,28 @@ export function activityDateRangeBounds(
     range_end = new Date(Date.UTC(y, m - 1, d, 23, 59, 59, 999));
   }
   return { range_start, range_end };
+}
+
+/**
+ * Mongo created_at predicate for inclusive calendar-day filters.
+ * Uses $gte start-of-day and exclusive $lt next-day when end_date is set.
+ */
+export function activityCreatedAtMongoFilter(
+  startDate: string | null,
+  endDate: string | null
+): { created_at: { $gte?: Date; $lt?: Date } } | Record<string, never> {
+  const created_at: { $gte?: Date; $lt?: Date } = {};
+
+  if (startDate) {
+    const [y, m, d] = startDate.split('-').map(Number);
+    created_at.$gte = new Date(Date.UTC(y, m - 1, d, 0, 0, 0, 0));
+  }
+  if (endDate) {
+    const [y, m, d] = endDate.split('-').map(Number);
+    created_at.$lt = new Date(Date.UTC(y, m - 1, d + 1, 0, 0, 0, 0));
+  }
+
+  return Object.keys(created_at).length > 0 ? { created_at } : {};
 }
 
 export function normalizeActivityFilters(input: {
@@ -487,19 +524,37 @@ export function normalizeActivityFilters(input: {
     };
   }
 
-  const scope = isActivityScope(input.activity_scope)
-    ? input.activity_scope
-    : 'all';
+  let scope: ActivityScope = 'all';
+  if (input.activity_scope != null && input.activity_scope !== '') {
+    if (!isActivityScope(input.activity_scope)) {
+      return {
+        filters: defaultActivityFilters(),
+        error: ACTIVITY_SCOPE_INVALID_MESSAGE,
+      };
+    }
+    scope = input.activity_scope;
+  }
 
   let listing_category: ActivityListingCategory | null = null;
   if (input.listing_category != null && input.listing_category !== '') {
     if (!isActivityListingCategory(input.listing_category)) {
       return {
         filters: defaultActivityFilters(),
-        error: 'Listing category filter is not supported.',
+        error: ACTIVITY_CATEGORY_INVALID_MESSAGE,
       };
     }
     listing_category = input.listing_category;
+  }
+
+  if (
+    listing_category &&
+    scope !== 'all' &&
+    scope !== 'listings'
+  ) {
+    return {
+      filters: defaultActivityFilters(),
+      error: ACTIVITY_CATEGORY_SCOPE_MESSAGE,
+    };
   }
 
   return {

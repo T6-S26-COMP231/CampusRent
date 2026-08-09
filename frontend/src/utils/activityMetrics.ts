@@ -181,6 +181,10 @@ export interface ActivityReportFilters {
   start_date: string | null;
   end_date: string | null;
   activity_scope: ActivityScope;
+  /**
+   * Allowed only with activity_scope=all or activity_scope=listings.
+   * Under all, only listing metrics are category-filtered (no joins).
+   */
   listing_category: ActivityListingCategory | null;
 }
 
@@ -253,6 +257,15 @@ export const ACTIVITY_NO_DATA_MESSAGE =
 export const ACTIVITY_DATE_FORMAT_MESSAGE = 'Dates must use YYYY-MM-DD format.';
 export const ACTIVITY_DATE_RANGE_ORDER_MESSAGE =
   'Start date cannot be after end date.';
+
+export const ACTIVITY_SCOPE_INVALID_MESSAGE =
+  'Activity scope must be one of: all, users, listings, rental_requests, reports, reviews, messaging.';
+
+export const ACTIVITY_CATEGORY_INVALID_MESSAGE =
+  'Listing category filter is not supported.';
+
+export const ACTIVITY_CATEGORY_SCOPE_MESSAGE =
+  'listing_category can only be used with activity_scope=all or activity_scope=listings.';
 export const ACTIVITY_START_DATE_LABEL = 'Start date';
 export const ACTIVITY_END_DATE_LABEL = 'End date';
 export const ACTIVITY_SCOPE_FILTER_LABEL = 'Activity scope';
@@ -615,19 +628,33 @@ export function normalizeActivityFilters(input: {
     };
   }
 
-  const scope = isActivityScope(input.activity_scope)
-    ? input.activity_scope
-    : 'all';
+  let scope: ActivityScope = 'all';
+  if (input.activity_scope != null && input.activity_scope !== '') {
+    if (!isActivityScope(input.activity_scope)) {
+      return {
+        filters: defaultActivityFilters(),
+        error: ACTIVITY_SCOPE_INVALID_MESSAGE,
+      };
+    }
+    scope = input.activity_scope;
+  }
 
   let listing_category: ActivityListingCategory | null = null;
   if (input.listing_category != null && input.listing_category !== '') {
     if (!isActivityListingCategory(input.listing_category)) {
       return {
         filters: defaultActivityFilters(),
-        error: 'Listing category filter is not supported.',
+        error: ACTIVITY_CATEGORY_INVALID_MESSAGE,
       };
     }
     listing_category = input.listing_category;
+  }
+
+  if (listing_category && scope !== 'all' && scope !== 'listings') {
+    return {
+      filters: defaultActivityFilters(),
+      error: ACTIVITY_CATEGORY_SCOPE_MESSAGE,
+    };
   }
 
   return {

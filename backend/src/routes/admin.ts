@@ -3,7 +3,7 @@ import { authenticate, requireAdmin } from '../middleware/auth';
 import { User } from '../models/User';
 import { asyncHandler } from '../utils/asyncHandler';
 import { aggregateActivityReport } from '../utils/activityAggregation';
-import { defaultActivityFilters } from '../utils/activityMetrics';
+import { normalizeActivityFilters } from '../utils/activityMetrics';
 import { performAdminModerationAction } from '../utils/adminModerationAction';
 import { ModerationActionError } from '../utils/moderationActions';
 import {
@@ -15,15 +15,25 @@ const router = Router();
 router.use(authenticate, requireAdmin);
 
 /**
- * US-24.4 — platform activity aggregate / activity summary.
- * Returns ActivityReport-shaped counts. Date/category filter application is
- * deferred to US-24.5 (#183); this endpoint currently returns the complete
- * platform aggregate (activity_scope=all, no date/category restriction).
+ * US-24.4 / US-24.5 — platform activity aggregate / activity summary.
+ * Optional query: start_date, end_date, activity_scope, listing_category.
+ * Invalid filters → 400. Zero matches → 200 with has_data false.
+ * Admin-only via authenticate + requireAdmin on this router.
  */
 router.get(
   '/activity',
-  asyncHandler(async (_req, res) => {
-    const report = await aggregateActivityReport(defaultActivityFilters(), new Date());
+  asyncHandler(async (req, res) => {
+    const { filters, error } = normalizeActivityFilters({
+      start_date: req.query.start_date,
+      end_date: req.query.end_date,
+      activity_scope: req.query.activity_scope,
+      listing_category: req.query.listing_category,
+    });
+    if (error) {
+      return res.status(400).json({ error });
+    }
+
+    const report = await aggregateActivityReport(filters, new Date());
     return res.status(200).json(report);
   })
 );

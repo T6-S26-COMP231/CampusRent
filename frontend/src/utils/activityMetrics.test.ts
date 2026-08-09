@@ -76,12 +76,21 @@ describe('US-24.1 activity metric and filter design', () => {
     const ok = normalizeActivityFilters({
       start_date: '2026-08-01',
       end_date: '2026-08-09',
-      activity_scope: 'reports',
+      activity_scope: 'listings',
       listing_category: 'Textbooks',
     });
     assert.equal(ok.error, '');
-    assert.equal(ok.filters.activity_scope, 'reports');
+    assert.equal(ok.filters.activity_scope, 'listings');
     assert.equal(ok.filters.listing_category, 'Textbooks');
+
+    const incompatible = normalizeActivityFilters({
+      activity_scope: 'reports',
+      listing_category: 'Textbooks',
+    });
+    assert.match(incompatible.error, /listing_category can only be used/i);
+
+    const badScope = normalizeActivityFilters({ activity_scope: 'payments' });
+    assert.match(badScope.error, /Activity scope must be one of/i);
   });
 
   test('activity report shape excludes sensitive fields; empty filter yields no-data message', () => {
