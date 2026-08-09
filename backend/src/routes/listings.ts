@@ -5,9 +5,9 @@ import fs from 'fs';
 import { authenticate, requireVerifiedStudent } from '../middleware/auth';
 import { nextId } from '../models/Counter';
 import { Listing, ListingDoc, toListingRow } from '../models/Listing';
-import { RentalRequest } from '../models/RentalRequest';
 import { User } from '../models/User';
 import { asyncHandler } from '../utils/asyncHandler';
+import { removeListingDocument } from '../utils/listingRemoval';
 import {
   isValidAvailability,
   isValidCategory,
@@ -361,13 +361,7 @@ router.delete(
       return res.status(403).json({ error: 'Only listing owners may remove listings' });
     }
 
-    for (const image of listing.images) {
-      const filePath = path.join(uploadsDir, image.filename);
-      if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
-    }
-
-    await RentalRequest.deleteMany({ listing_id: listing._id });
-    await listing.deleteOne();
+    await removeListingDocument(listing);
 
     return res.json({ message: 'Listing removed successfully' });
   })
