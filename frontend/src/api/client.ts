@@ -78,7 +78,9 @@ async function requestWithStatus<T>(
       errorMessage = data;
     }
 
-    throw new Error(errorMessage);
+    const error = new Error(errorMessage) as Error & { status: number };
+    error.status = response.status;
+    throw error;
   }
 
   return { data: data as T, status: response.status };
@@ -197,6 +199,21 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ action }),
     }),
+
+  /**
+   * US-19.6 — create a review for a completed rental.
+   * Body is { rental_request_id, rating, comment } only.
+   * Never includes reviewer_id / listing_id / reviewed_user_id.
+   */
+  createReview: (body: CreateReviewBody): Promise<ListingReviewItem> =>
+    request<ListingReviewItem>('/reviews', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+
+  /** US-19.6 — list reviews for a listing (ListingDetailPage). */
+  getListingReviews: (listingId: number): Promise<ListingReviewItem[]> =>
+    request<ListingReviewItem[]>(`/listings/${listingId}/reviews`),
 };
 
 export interface User {
@@ -281,6 +298,28 @@ export interface Message {
 /** POST /api/conversations/:id/messages — sender comes from auth only. */
 export interface SendMessageBody {
   body: string;
+}
+
+/** POST /api/reviews — reviewer/listing/reviewed user come from auth + rental only. */
+export interface CreateReviewBody {
+  rental_request_id: number;
+  rating: number;
+  comment: string;
+}
+
+/** Review row from POST /api/reviews and GET /api/listings/:id/reviews. */
+export interface ListingReviewItem {
+  id: number;
+  rental_request_id: number;
+  listing_id: number;
+  reviewed_user_id: number;
+  rating: number;
+  comment: string;
+  created_at: string;
+  reviewer: {
+    id: number;
+    label: string;
+  };
 }
 
 /** POST /api/reports — reporter comes from auth only. */

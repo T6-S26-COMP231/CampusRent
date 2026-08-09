@@ -9,7 +9,13 @@ import StatusBadge from '../components/StatusBadge';
 import { useAuth } from '../context/AuthContext';
 import {
   REVIEW_ALREADY_SUBMITTED_LABEL,
+  REVIEW_SUCCESS_MESSAGE,
+  isRentalMarkedReviewed,
+  markRentalReviewed,
   myRequestsReviewControls,
+  runReviewSubmitFlow,
+  type ReviewRentalContext,
+  type SubmitReviewBody,
 } from '../utils/ratingsReviews';
 import { ConversationTarget } from '../utils/startConversation';
 
@@ -37,8 +43,12 @@ export default function MyRequestsPage() {
   const [completingId, setCompletingId] = useState<number | null>(null);
   const [confirmCancelId, setConfirmCancelId] = useState<number | null>(null);
   const [confirmCompleteId, setConfirmCompleteId] = useState<number | null>(null);
-  /** Inline review form for a completed rental; already-reviewed truth comes later from API. */
+  /** Inline review form for a completed rental. */
   const [reviewRequestId, setReviewRequestId] = useState<number | null>(null);
+  /** Reviewed rental ids known in this session (success or duplicate 409). */
+  const [reviewedRequestIds, setReviewedRequestIds] = useState<Set<number>>(
+    () => new Set()
+  );
 
   const loadRequests = () => {
     setLoading(true);
@@ -83,6 +93,36 @@ export default function MyRequestsPage() {
     } finally {
       setCompletingId(null);
     }
+  };
+
+  const submitReview = async (context: ReviewRentalContext, body: SubmitReviewBody) => {
+    setError('');
+    setMessage('');
+    setConversationNotice(null);
+
+    const result = await runReviewSubmitFlow(
+      context,
+      body.rating,
+      body.comment,
+      (submitBody) => api.createReview(submitBody)
+    );
+
+    if (result.alreadyReviewed || result.success) {
+      setReviewedRequestIds((prev) => markRentalReviewed(prev, context.rentalRequestId));
+      setReviewRequestId(null);
+    }
+
+    if (result.success) {
+      setMessage(result.success || REVIEW_SUCCESS_MESSAGE);
+      return;
+    }
+
+    if (result.alreadyReviewed) {
+      setMessage(result.error || REVIEW_ALREADY_SUBMITTED_LABEL);
+      return;
+    }
+
+    throw new Error(result.error || 'Unable to submit review');
   };
 
   const busyId = cancellingId ?? completingId;
@@ -136,9 +176,16 @@ export default function MyRequestsPage() {
       ) : (
         <div className="mt-8 space-y-4">
           {requests.map((request) => {
-            // alreadyReviewed stays false until list-review API can prove a prior review.
-            const reviewControls = myRequestsReviewControls(request, user?.id, false);
-            const reviewOpen = reviewRequestId === request.id && reviewControls.context != null;
+            const alreadyReviewed = isRentalMarkedReviewed(reviewedRequestIds, request.id);
+            const reviewControls = myRequestsReviewControls(
+              request,
+              user?.id,
+              alreadyReviewed
+            );
+            const reviewOpen =
+              reviewRequestId === request.id &&
+              reviewControls.context != null &&
+              !alreadyReviewed;
 
             return (
             <article
@@ -180,8 +227,9 @@ export default function MyRequestsPage() {
                     <ReviewForm
                       context={reviewControls.context}
                       viewerId={user?.id}
-                      alreadyReviewed={false}
+                      alreadyReviewed={alreadyReviewed}
                       onCancel={() => setReviewRequestId(null)}
+                      onSubmit={(body) => submitReview(reviewControls.context!, body)}
                     />
                   )}
 

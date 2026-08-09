@@ -22,6 +22,13 @@ import {
   sameEntityId,
   type ReportTarget,
 } from '../utils/reportContent';
+import {
+  applyListingReviewsFailed,
+  applyListingReviewsLoaded,
+  applyListingReviewsLoading,
+  mapApiReviewsToDisplayItems,
+  type ReviewDisplayItem,
+} from '../utils/ratingsReviews';
 import { ConversationTarget } from '../utils/startConversation';
 
 type ReportPanel = 'listing' | 'user' | null;
@@ -43,6 +50,30 @@ export default function ListingDetailPage() {
     message: string;
     conversationId: number;
   } | null>(null);
+  const [reviews, setReviews] = useState<ReviewDisplayItem[]>([]);
+  const [reviewsLoading, setReviewsLoading] = useState(true);
+  const [reviewsError, setReviewsError] = useState('');
+
+  const loadReviews = async (listingId: number, listingTitle?: string) => {
+    setReviewsLoading(true);
+    setReviewsError('');
+    const loadingState = applyListingReviewsLoading();
+    setReviews(loadingState.reviews);
+    try {
+      const rows = await api.getListingReviews(listingId);
+      const loaded = applyListingReviewsLoaded(
+        mapApiReviewsToDisplayItems(rows, listingTitle)
+      );
+      setReviews(loaded.reviews);
+      setReviewsError(loaded.error);
+    } catch (err) {
+      const failed = applyListingReviewsFailed(err);
+      setReviews(failed.reviews);
+      setReviewsError(failed.error);
+    } finally {
+      setReviewsLoading(false);
+    }
+  };
 
   const loadPage = async () => {
     try {
@@ -53,6 +84,7 @@ export default function ListingDetailPage() {
       ]);
       setListing(listingResult);
       setMyRequest(requestResult);
+      await loadReviews(listingId, listingResult.title);
     } catch {
       navigate('/browse');
     } finally {
@@ -175,8 +207,11 @@ export default function ListingDetailPage() {
 
           <p className="mt-5 text-base leading-7 text-slate-600">{listing.description}</p>
 
-          {/* Reviews load from API in US-19.6 — never fabricate production reviews. */}
-          <ListingReviews reviews={[]} />
+          <ListingReviews
+            reviews={reviews}
+            loading={reviewsLoading}
+            error={reviewsError}
+          />
 
           {listing.rental_terms && (
             <div className="mt-6 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">

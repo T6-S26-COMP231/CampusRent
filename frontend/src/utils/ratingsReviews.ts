@@ -13,11 +13,11 @@
  *
  * Conceptual flow:
  *   Completed rental → Review option available → open form
- *   → rating + written review → submit (API in US-19.4/19.6)
- *   → review appears on ListingDetailPage Reviews section
+ *   → rating + written review → POST /api/reviews (US-19.6)
+ *   → review appears on ListingDetailPage via GET /api/listings/:id/reviews
  *
  * Incomplete rental: Review action unavailable.
- * Already reviewed: “Review submitted” — no second form (API later supplies truth).
+ * Already reviewed: “Review submitted” — no second form (local state + 409).
  *
  * Rating scale (team implementation decision documented on GitHub #162):
  *   1–5 whole-number stars, required, no half-stars.
@@ -25,7 +25,7 @@
  *
  * Written review: required, trimmed, non-empty. No min/max/profanity/anonymous rules.
  *
- * Persistence / APIs belong to US-19.3–19.6.
+ * Backend eligibility (US-19.5) remains the security boundary.
  */
 
 export const REVIEW_FORM_HEADING = 'Leave a review';
@@ -39,13 +39,21 @@ export const REVIEW_RATING_LABEL = 'Rating';
 export const REVIEW_COMMENT_LABEL = 'Written review';
 export const REVIEW_COMMENT_PLACEHOLDER =
   'Share your experience with this completed rental…';
-/** Only after a real backend save (US-19.6). Do not show from the UI-only form. */
-export const REVIEW_SUCCESS_MESSAGE = 'Review submitted successfully.';
+/** Only after a real backend save (US-19.6). */
+export const REVIEW_SUCCESS_MESSAGE = 'Review saved successfully.';
 export const REVIEW_NOT_CONNECTED_MESSAGE = 'Review submission is not connected yet.';
 export const REVIEW_INCOMPLETE_RATING_MESSAGE = 'A rating is required.';
 export const REVIEW_INCOMPLETE_COMMENT_MESSAGE = 'A written review is required.';
 export const REVIEW_DISPLAY_HEADING = 'Reviews';
 export const REVIEW_DISPLAY_EMPTY_MESSAGE = 'No reviews yet for this listing.';
+export const REVIEW_LOAD_ERROR_FALLBACK = 'Unable to load reviews for this listing.';
+export const REVIEW_DUPLICATE_MESSAGE =
+  'You have already submitted a review for this completed rental.';
+export const REVIEW_INCOMPLETE_RENTAL_MESSAGE =
+  'Reviews are only available after a completed rental.';
+export const REVIEW_FORBIDDEN_MESSAGE =
+  'Only the renter for this completed rental may submit a review.';
+export const REVIEW_NOT_FOUND_MESSAGE = 'This rental request or listing is no longer available.';
 
 /** Team decision (#162): whole-number stars from 1 through 5. */
 export const STAR_RATING_MIN = 1;
@@ -414,7 +422,7 @@ export function applyCancelledReviewForm(): {
 }
 
 /**
- * UI-only submit path before US-19.6 API wiring.
+ * Fallback when ReviewForm has no onSubmit (should not happen on wired pages).
  * Never claims the review was saved on the server.
  */
 export function applyUnconnectedReviewSubmit(): {
@@ -429,6 +437,318 @@ export function applyUnconnectedReviewSubmit(): {
 
 export function claimsReviewSavedSuccessfully(message: string): boolean {
   return /saved successfully|submitted successfully/i.test(message);
+}
+
+/** Backend list/create review item shape (safe fields only). */
+export interface ListingReviewApiItem {
+  id: number;
+  rental_request_id: number;
+  listing_id: number;
+  reviewed_user_id?: number;
+  rating: number;
+  comment: string;
+  created_at: string;
+  reviewer: {
+    id: number;
+    label: string;
+  };
+}
+
+export type ListingReviewsUiStatus = 'loading' | 'empty' | 'populated' | 'error';
+
+export type ReviewSubmitErrorKind =
+  | 'duplicate'
+  | 'incomplete_rental'
+  | 'forbidden'
+  | 'not_found'
+  | 'validation'
+  | 'auth'
+  | 'other';
+
+export function reviewSuccessMessage(): string {
+  return REVIEW_SUCCESS_MESSAGE;
+}
+
+/** US-19.6 — POST /api/reviews call descriptor (trusted body only). */
+export function buildCreateReviewCall(
+  context: ReviewRentalContext,
+  rating: RatingValue,
+  comment: string
+): { path: string; method: 'POST'; body: SubmitReviewBody } {
+  return {
+    path: '/reviews',
+    method: 'POST',
+    body: buildSubmitReviewBody(context, rating, comment),
+  };
+}
+
+/** US-19.6 — GET /api/listings/:id/reviews call descriptor. */
+export function buildGetListingReviewsCall(
+  listingId: number
+): { path: string; method: 'GET' } {
+  return {
+    path: `/listings/${listingId}/reviews`,
+    method: 'GET',
+  };
+}
+
+export function mapApiReviewToDisplayItem(
+  review: ListingReviewApiItem,
+  listingTitle?: string
+): ReviewDisplayItem {
+  return toReviewDisplayItem(
+    {
+      id: review.id,
+      rating: isWholeStarRating(review.rating) ? review.rating : STAR_RATING_MIN,
+      comment: review.comment,
+      created_at: review.created_at,
+      listing_id: review.listing_id,
+    },
+    review.reviewer?.label ?? `User #${review.reviewer?.id ?? '?'}`,
+    listingTitle
+  );
+}
+
+export function mapApiReviewsToDisplayItems(
+  reviews: ListingReviewApiItem[],
+  listingTitle?: string
+): ReviewDisplayItem[] {
+  return reviews.map((review) => mapApiReviewToDisplayItem(review, listingTitle));
+}
+
+export function listingReviewsUiStatus(
+  loading: boolean,
+  error: string,
+  count: number
+): ListingReviewsUiStatus {
+  if (loading) return 'loading';
+  if (error) return 'error';
+  return count === 0 ? 'empty' : 'populated';
+}
+
+export function applyListingReviewsLoading(): {
+  status: ListingReviewsUiStatus;
+  reviews: ReviewDisplayItem[];
+  error: string;
+} {
+  return { status: 'loading', reviews: [], error: '' };
+}
+
+export function applyListingReviewsLoaded(
+  reviews: ReviewDisplayItem[]
+): {
+  status: ListingReviewsUiStatus;
+  reviews: ReviewDisplayItem[];
+  error: string;
+} {
+  return {
+    status: listingReviewsUiStatus(false, '', reviews.length),
+    reviews,
+    error: '',
+  };
+}
+
+export function applyListingReviewsFailed(
+  error: unknown
+): {
+  status: ListingReviewsUiStatus;
+  reviews: ReviewDisplayItem[];
+  error: string;
+} {
+  return {
+    status: 'error',
+    reviews: [],
+    error: reviewErrorMessage(error, REVIEW_LOAD_ERROR_FALLBACK),
+  };
+}
+
+export function reviewErrorMessage(
+  error: unknown,
+  fallback = 'Unable to submit review'
+): string {
+  return error instanceof Error && error.message.trim()
+    ? error.message
+    : fallback;
+}
+
+export function reviewSubmitErrorStatus(error: unknown): number | null {
+  if (
+    error &&
+    typeof error === 'object' &&
+    'status' in error &&
+    typeof (error as { status?: unknown }).status === 'number'
+  ) {
+    return (error as { status: number }).status;
+  }
+  return null;
+}
+
+export function classifyReviewSubmitError(error: unknown): {
+  kind: ReviewSubmitErrorKind;
+  message: string;
+  alreadyReviewed: boolean;
+} {
+  const status = reviewSubmitErrorStatus(error);
+  const message = reviewErrorMessage(error);
+  const lower = message.toLowerCase();
+
+  if (status === 401 || /unauthor|authentication|log ?in/i.test(message)) {
+    return { kind: 'auth', message, alreadyReviewed: false };
+  }
+  if (
+    status === 409 &&
+    (/already exists/i.test(message) || /already submitted/i.test(message))
+  ) {
+    return {
+      kind: 'duplicate',
+      message: REVIEW_DUPLICATE_MESSAGE,
+      alreadyReviewed: true,
+    };
+  }
+  if (
+    status === 409 ||
+    /only available after a completed rental/i.test(lower)
+  ) {
+    return {
+      kind: 'incomplete_rental',
+      message: /completed rental/i.test(message)
+        ? message
+        : REVIEW_INCOMPLETE_RENTAL_MESSAGE,
+      alreadyReviewed: false,
+    };
+  }
+  if (status === 403 || /only the renter/i.test(lower)) {
+    return {
+      kind: 'forbidden',
+      message: /renter/i.test(message) ? message : REVIEW_FORBIDDEN_MESSAGE,
+      alreadyReviewed: false,
+    };
+  }
+  if (status === 404 || /not found/i.test(lower)) {
+    return {
+      kind: 'not_found',
+      message: /not found/i.test(message) ? message : REVIEW_NOT_FOUND_MESSAGE,
+      alreadyReviewed: false,
+    };
+  }
+  if (status === 400 || /rating|comment|required|invalid/i.test(lower)) {
+    return { kind: 'validation', message, alreadyReviewed: false };
+  }
+  return { kind: 'other', message, alreadyReviewed: false };
+}
+
+export function applySuccessfulReviewSubmit(): {
+  rating: StarRating | null;
+  comment: string;
+  error: string;
+  success: string;
+  alreadyReviewed: boolean;
+} {
+  return {
+    rating: null,
+    comment: '',
+    error: '',
+    success: REVIEW_SUCCESS_MESSAGE,
+    alreadyReviewed: true,
+  };
+}
+
+export function applyFailedReviewSubmit(
+  rating: StarRating | null,
+  comment: string,
+  error: unknown
+): {
+  rating: StarRating | null;
+  comment: string;
+  error: string;
+  success: string;
+  alreadyReviewed: boolean;
+} {
+  const classified = classifyReviewSubmitError(error);
+  return {
+    rating,
+    comment,
+    error: classified.message,
+    success: '',
+    alreadyReviewed: classified.alreadyReviewed,
+  };
+}
+
+/**
+ * Pure submit-flow helper for tests and My Requests wiring.
+ * Success clears draft only after the provided create resolves.
+ * Failure preserves rating/comment; duplicate 409 marks alreadyReviewed.
+ */
+export async function runReviewSubmitFlow(
+  context: ReviewRentalContext,
+  rating: RatingValue,
+  comment: string,
+  create: (body: SubmitReviewBody) => Promise<unknown>
+): Promise<{
+  rating: StarRating | null;
+  comment: string;
+  error: string;
+  success: string;
+  alreadyReviewed: boolean;
+  body: SubmitReviewBody | null;
+}> {
+  if (!isCompletedRentalStatus(context.status)) {
+    return {
+      rating,
+      comment,
+      error: REVIEW_INCOMPLETE_RENTAL_MESSAGE,
+      success: '',
+      alreadyReviewed: false,
+      body: null,
+    };
+  }
+
+  const body = buildSubmitReviewBody(context, rating, comment);
+  try {
+    await create(body);
+    return { ...applySuccessfulReviewSubmit(), body };
+  } catch (error) {
+    return { ...applyFailedReviewSubmit(rating, comment, error), body };
+  }
+}
+
+/**
+ * Pure listing-reviews load helper for ListingDetailPage / tests.
+ * Never fabricates reviews — empty API arrays stay empty.
+ */
+export async function runListingReviewsLoadFlow(
+  listingId: number,
+  listingTitle: string | undefined,
+  load: (listingId: number) => Promise<ListingReviewApiItem[]>
+): Promise<{
+  status: ListingReviewsUiStatus;
+  reviews: ReviewDisplayItem[];
+  error: string;
+}> {
+  try {
+    const rows = await load(listingId);
+    return applyListingReviewsLoaded(mapApiReviewsToDisplayItems(rows, listingTitle));
+  } catch (error) {
+    return applyListingReviewsFailed(error);
+  }
+}
+
+/** Track reviewed rental request ids in My Requests UI state (no fabrication). */
+export function markRentalReviewed(
+  reviewedIds: ReadonlySet<number> | readonly number[],
+  rentalRequestId: number
+): Set<number> {
+  const next = new Set(reviewedIds);
+  next.add(rentalRequestId);
+  return next;
+}
+
+export function isRentalMarkedReviewed(
+  reviewedIds: ReadonlySet<number> | readonly number[],
+  rentalRequestId: number
+): boolean {
+  if (reviewedIds instanceof Set) return reviewedIds.has(rentalRequestId);
+  return Array.from(reviewedIds).includes(rentalRequestId);
 }
 
 export const REVIEW_WORKFLOW_STEPS = [

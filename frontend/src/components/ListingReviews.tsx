@@ -2,9 +2,11 @@ import { MessageSquareText, Star } from 'lucide-react';
 import {
   REVIEW_DISPLAY_EMPTY_MESSAGE,
   REVIEW_DISPLAY_HEADING,
+  REVIEW_LOAD_ERROR_FALLBACK,
   STAR_RATING_MAX,
   filledStarCount,
   formatReviewTimestamp,
+  listingReviewsUiStatus,
   ratingAriaLabel,
   type ReviewDisplayItem,
   type StarRating,
@@ -12,6 +14,8 @@ import {
 
 interface Props {
   reviews?: ReviewDisplayItem[];
+  loading?: boolean;
+  error?: string;
 }
 
 function StarDisplay({ rating }: { rating: StarRating }) {
@@ -35,20 +39,42 @@ function StarDisplay({ rating }: { rating: StarRating }) {
 }
 
 /**
- * US-19.2 — listing detail reviews section.
- * Renders only the reviews provided by the parent (no fabricated production data).
+ * US-19.2 / US-19.6 — listing detail reviews section.
+ * Parent supplies API-mapped reviews; never fabricates production data.
  */
-export default function ListingReviews({ reviews = [] }: Props) {
+export default function ListingReviews({
+  reviews = [],
+  loading = false,
+  error = '',
+}: Props) {
+  const status = listingReviewsUiStatus(loading, error, reviews.length);
+
   return (
     <section className="mt-6" aria-label={REVIEW_DISPLAY_HEADING}>
       <h2 className="font-display text-lg font-bold text-slate-900">{REVIEW_DISPLAY_HEADING}</h2>
 
-      {reviews.length === 0 ? (
+      {status === 'loading' && (
+        <div className="mt-3 space-y-3" aria-busy="true" aria-label="Loading reviews">
+          {[1, 2].map((item) => (
+            <div key={item} className="h-24 animate-pulse rounded-2xl bg-slate-200" />
+          ))}
+        </div>
+      )}
+
+      {status === 'error' && (
+        <div className="mt-3 rounded-2xl border border-red-200 bg-red-50 px-4 py-6 text-center">
+          <p className="text-sm text-red-700">{error || REVIEW_LOAD_ERROR_FALLBACK}</p>
+        </div>
+      )}
+
+      {status === 'empty' && (
         <div className="mt-3 rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-8 text-center">
           <MessageSquareText className="mx-auto h-8 w-8 text-slate-300" />
           <p className="mt-3 text-sm text-slate-500">{REVIEW_DISPLAY_EMPTY_MESSAGE}</p>
         </div>
-      ) : (
+      )}
+
+      {status === 'populated' && (
         <ul className="mt-3 space-y-3">
           {reviews.map((review) => (
             <li

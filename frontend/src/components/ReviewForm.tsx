@@ -24,7 +24,7 @@ interface Props {
   alreadyReviewed?: boolean;
   onCancel: () => void;
   /**
-   * Optional later seam for US-19.6. When omitted, validated submits show the
+   * US-19.6 — persist via createReview. When omitted, validated submits show the
    * truthful not-connected notice and never claim a successful save.
    */
   onSubmit?: (body: SubmitReviewBody) => void | Promise<void>;

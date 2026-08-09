@@ -257,6 +257,7 @@ describe('US-19.2 review form, rating control, and review display helpers', () =
     assert.equal(unconnected.notice, REVIEW_NOT_CONNECTED_MESSAGE);
     assert.equal(unconnected.success, '');
     assert.equal(claimsReviewSavedSuccessfully(unconnected.notice), false);
+    assert.equal(REVIEW_SUCCESS_MESSAGE, 'Review saved successfully.');
     assert.equal(claimsReviewSavedSuccessfully(REVIEW_SUCCESS_MESSAGE), true);
   });
 
