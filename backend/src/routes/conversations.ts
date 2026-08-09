@@ -13,6 +13,7 @@ import { Listing } from '../models/Listing';
 import {
   MESSAGE_MAX_LENGTH,
   Message,
+  MessageDoc,
   normalizeMessageBody,
   toMessageRow,
 } from '../models/Message';
@@ -22,6 +23,9 @@ import { asyncHandler } from '../utils/asyncHandler';
 
 const router = Router();
 router.use(authenticate, requireVerifiedStudent);
+
+/** Safe list preview length — full body remains available on history. */
+const LATEST_MESSAGE_PREVIEW_MAX = 160;
 
 function isDuplicateKeyError(error: unknown): boolean {
   return (
@@ -36,10 +40,24 @@ async function findConversationByIdentity(identity: ConversationIdentity) {
   return Conversation.findOne(identity);
 }
 
+function toLatestMessagePreview(body: string): string {
+  const trimmed = body.trim();
+  if (trimmed.length <= LATEST_MESSAGE_PREVIEW_MAX) return trimmed;
+  return `${trimmed.slice(0, LATEST_MESSAGE_PREVIEW_MAX - 1)}…`;
+}
+
+async function latestMessageForConversation(
+  conversationId: number
+): Promise<MessageDoc | null> {
+  return Message.findOne({ conversation_id: conversationId })
+    .sort({ created_at: -1, _id: -1 })
+    .exec();
+}
+
 /**
  * Enrich for the messaging dashboard.
- * No Message documents — preview stays empty until US-17. The frontend shows
- * the truthful “No messages yet” label when latest_message_preview is null.
+ * latest_message_preview is the newest Message body (truncated), or null for
+ * legacy empty conversations that may still exist in the database.
  */
 async function enrichConversation(conversation: ConversationDoc, viewerId: number) {
   const listing = await Listing.findById(conversation.listing_id).lean();
@@ -48,6 +66,7 @@ async function enrichConversation(conversation: ConversationDoc, viewerId: numbe
       ? conversation.participant_high_id
       : conversation.participant_low_id;
   const counterpart = await User.findById(counterpartId).lean();
+  const latestMessage = await latestMessageForConversation(conversation._id);
 
   return {
     ...toConversationRow(conversation),
@@ -64,14 +83,62 @@ async function enrichConversation(conversation: ConversationDoc, viewerId: numbe
           last_name: counterpart.last_name,
         }
       : null,
-    latest_message_preview: null as string | null,
+    latest_message_preview: latestMessage
+      ? toLatestMessagePreview(latestMessage.body)
+      : null,
   };
+}
+
+function parseInitialMessageBody(raw: unknown): { body?: string; error?: string } {
+  if (raw === undefined || raw === null) {
+    return { error: 'body is required' };
+  }
+  if (typeof raw !== 'string') {
+    return { error: 'body must be a string' };
+  }
+
+  const trimmed = raw.trim();
+  if (trimmed.length === 0) {
+    return { error: 'Message body cannot be blank' };
+  }
+  if (trimmed.length > MESSAGE_MAX_LENGTH) {
+    return {
+      error: `Message body cannot exceed ${MESSAGE_MAX_LENGTH} characters`,
+    };
+  }
+
+  try {
+    return { body: normalizeMessageBody(trimmed) };
+  } catch (error) {
+    return {
+      error: error instanceof Error ? error.message : 'Invalid message body',
+    };
+  }
+}
+
+async function persistInitialMessage(
+  conversationId: number,
+  senderId: number,
+  normalizedBody: string
+) {
+  const created = await Message.create({
+    _id: await nextId('messages'),
+    conversation_id: conversationId,
+    sender_id: senderId,
+    body: normalizedBody,
+  });
+
+  await Conversation.updateOne(
+    { _id: conversationId },
+    { $set: { updated_at: new Date() } }
+  );
+
+  return created;
 }
 
 /**
  * US-16.6 — list conversations for the authenticated participant only.
- * Sorted newest updated first. Empty-conversation shell assumption unchanged:
- * identity is listing + participants; message content belongs to US-17.
+ * Sorted newest updated first. Each row includes the real latest-message preview.
  */
 router.get(
   '/',
@@ -90,7 +157,7 @@ router.get(
 );
 
 /**
- * US-16.6 — open a single conversation shell. Participants only.
+ * US-16.6 — open a single conversation. Participants only.
  */
 router.get(
   '/:id',
@@ -242,23 +309,27 @@ router.post(
 );
 
 /**
- * US-16.5 — participant authorization and duplicate prevention.
+ * US-16 — start a conversation with a required nonblank first message.
  *
- * Body: { listing_id, recipient_id }. Initiator is always req.user.id.
- *
- * Empty-conversation assumption (TAC ambiguity, not fully resolved):
- * US-16 identifies a conversation by listing + participants only. Message content
- * belongs to US-17. This endpoint still creates a conversation shell without
- * inventing placeholder messages; acceptance review should confirm that
- * interpretation against the TAC “empty conversations are not allowed” rule.
+ * Body: { listing_id, recipient_id, body }. Initiator is always req.user.id.
+ * TAC: empty conversations are not allowed — Conversation + first Message are
+ * persisted together. Duplicate identity returns 200 and still records the
+ * submitted nonblank body on the existing conversation (no second Conversation).
  */
 router.post(
   '/',
   asyncHandler(async (req, res) => {
-    const { listing_id, recipient_id } = req.body as {
+    const { listing_id, recipient_id, body } = req.body as {
       listing_id?: unknown;
       recipient_id?: unknown;
+      body?: unknown;
     };
+
+    const parsedMessage = parseInitialMessageBody(body);
+    if (parsedMessage.error || !parsedMessage.body) {
+      return res.status(400).json({ error: parsedMessage.error || 'body is required' });
+    }
+    const initialBody = parsedMessage.body;
 
     if (listing_id === undefined || listing_id === null || listing_id === '') {
       return res.status(400).json({ error: 'listing_id is required' });
@@ -334,6 +405,7 @@ router.post(
 
     const existing = await findConversationByIdentity(identity);
     if (existing) {
+      await persistInitialMessage(existing._id, initiatorId, initialBody);
       return res.status(200).json(toConversationRow(existing));
     }
 
@@ -342,14 +414,33 @@ router.post(
         _id: await nextId('conversations'),
         ...identity,
       });
+
+      try {
+        await persistInitialMessage(created._id, initiatorId, initialBody);
+      } catch (messageError) {
+        // TAC: never leave an empty conversation if the first message fails.
+        await Conversation.deleteOne({ _id: created._id });
+        throw messageError;
+      }
+
       return res.status(201).json(toConversationRow(created));
     } catch (error) {
-      if (!isDuplicateKeyError(error)) throw error;
+      if (!isDuplicateKeyError(error)) {
+        if (
+          error instanceof Error &&
+          (error.name === 'ValidationError' || error.name === 'CastError')
+        ) {
+          return res.status(400).json({ error: error.message });
+        }
+        throw error;
+      }
 
       const raced = await findConversationByIdentity(identity);
       if (!raced) {
         throw error;
       }
+
+      await persistInitialMessage(raced._id, initiatorId, initialBody);
       return res.status(200).json(toConversationRow(raced as ConversationDoc));
     }
   })

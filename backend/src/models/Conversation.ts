@@ -8,12 +8,9 @@ import mongoose, { Schema } from 'mongoose';
  * same unique index. Names/emails are not denormalized; join User/Listing when
  * needed.
  *
- * US-17/US-18 may attach Message documents via conversation_id. This model
- * deliberately stores no message payload or history.
- *
- * TAC empty-conversation note (not fully resolved): identity is listing +
- * participants. Message content is US-17. US-16 keeps a conversation shell
- * without inventing placeholder messages pending acceptance review.
+ * TAC: empty conversations are not allowed. POST /api/conversations persists a
+ * Conversation only together with a nonblank first Message. US-17 sends further
+ * messages; US-18 reads chronological history via conversation_id.
  */
 export interface ConversationDoc {
   _id: number;

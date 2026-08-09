@@ -95,7 +95,7 @@ describe('US-16.7 conversation list and participant-only access', () => {
   test('participant list contains newly created conversation with counterpart and listing enrichment', async () => {
     const created = await api(baseUrl, 'POST', '/api/conversations', {
       token: tokenFor(renterId, 'renter@mycentennialcollege.ca'),
-      body: { listing_id: listingId, recipient_id: ownerId },
+      body: { listing_id: listingId, recipient_id: ownerId , body: 'Hello — is this still available?'},
     });
     assert.equal(created.status, 201);
 
@@ -111,7 +111,7 @@ describe('US-16.7 conversation list and participant-only access', () => {
     assert.equal(list.data[0].counterpart.id, ownerId);
     assert.equal(list.data[0].counterpart.first_name, 'Owner');
     assert.equal(list.data[0].counterpart.last_name, 'Student');
-    assert.equal(list.data[0].latest_message_preview, null);
+    assert.equal(list.data[0].latest_message_preview, 'Hello — is this still available?');
   });
 
   test('newly created conversation appears in GET /api/conversations', async () => {
@@ -121,7 +121,7 @@ describe('US-16.7 conversation list and participant-only access', () => {
 
     const created = await api(baseUrl, 'POST', '/api/conversations', {
       token,
-      body: { listing_id: listingId, recipient_id: ownerId },
+      body: { listing_id: listingId, recipient_id: ownerId , body: 'Hello — is this still available?'},
     });
     assert.equal(created.status, 201);
 
@@ -133,7 +133,7 @@ describe('US-16.7 conversation list and participant-only access', () => {
   test('unrelated conversations are excluded', async () => {
     await api(baseUrl, 'POST', '/api/conversations', {
       token: tokenFor(renterId, 'renter@mycentennialcollege.ca'),
-      body: { listing_id: listingId, recipient_id: ownerId },
+      body: { listing_id: listingId, recipient_id: ownerId , body: 'Hello — is this still available?'},
     });
 
     const outsiderList = await api(baseUrl, 'GET', '/api/conversations', {
@@ -150,11 +150,11 @@ describe('US-16.7 conversation list and participant-only access', () => {
 
     const first = await api(baseUrl, 'POST', '/api/conversations', {
       token,
-      body: { listing_id: listingId, recipient_id: ownerId },
+      body: { listing_id: listingId, recipient_id: ownerId , body: 'Hello — is this still available?'},
     });
     const second = await api(baseUrl, 'POST', '/api/conversations', {
       token,
-      body: { listing_id: secondListingId, recipient_id: ownerId },
+      body: { listing_id: secondListingId, recipient_id: ownerId , body: 'Hello — is this still available?'},
     });
 
     // Bump the older conversation's updated_at so it should sort first.
@@ -177,7 +177,7 @@ describe('US-16.7 conversation list and participant-only access', () => {
   test('participant can open conversation detail and unrelated user receives 403', async () => {
     const created = await api(baseUrl, 'POST', '/api/conversations', {
       token: tokenFor(renterId, 'renter@mycentennialcollege.ca'),
-      body: { listing_id: listingId, recipient_id: ownerId },
+      body: { listing_id: listingId, recipient_id: ownerId , body: 'Hello — is this still available?'},
     });
 
     const outsiderDetail = await api(baseUrl, 'GET', `/api/conversations/${created.data.id}`, {
@@ -191,7 +191,7 @@ describe('US-16.7 conversation list and participant-only access', () => {
     assert.equal(participantDetail.status, 200);
     assert.equal(participantDetail.data.counterpart.id, renterId);
     assert.equal(participantDetail.data.listing.title, 'Campus Camera');
-    assert.equal(participantDetail.data.latest_message_preview, null);
+    assert.equal(participantDetail.data.latest_message_preview, 'Hello — is this still available?');
   });
 
   test('missing conversation returns 404', async () => {

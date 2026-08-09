@@ -111,6 +111,8 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
 export interface StartConversationBody {
   listing_id: number;
   recipient_id: number;
+  /** Required nonblank first message — TAC forbids empty conversations. */
+  body: string;
 }
 
 export interface StartConversationResult {

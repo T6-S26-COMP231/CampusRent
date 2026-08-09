@@ -15,7 +15,7 @@ export default function ConversationStartedNotice({ message, conversationId }: P
     <div className="mt-6 rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-800">
       <p className="font-semibold text-emerald-900">{message}</p>
       <p className="mt-1 text-emerald-800">
-        It now appears in your Conversations list. Message sending is not available yet.
+        It now appears in your Conversations list with your message preview. Open it to continue messaging.
       </p>
       <div className="mt-3 flex flex-wrap gap-3">
         <Link

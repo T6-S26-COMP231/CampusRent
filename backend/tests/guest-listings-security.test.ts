@@ -196,7 +196,7 @@ describe('US-01.4 registered APIs and full details stay protected', () => {
       {
         method: 'POST',
         path: '/api/conversations',
-        body: { listing_id: listingId, recipient_id: ownerId },
+        body: { listing_id: listingId, recipient_id: ownerId , body: 'Hello — is this still available?'},
       },
       { method: 'GET', path: '/api/profile' },
       { method: 'GET', path: '/api/admin/activity' },
