@@ -21,7 +21,7 @@ import {
 
 interface Props {
   target: ReportTarget;
-  viewerId: number | undefined;
+  viewerId: number | string | undefined;
   onCancel: () => void;
   /** Optional hook after a real successful POST /api/reports. */
   onSubmitted?: () => void;

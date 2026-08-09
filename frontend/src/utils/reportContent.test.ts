@@ -25,13 +25,16 @@ import {
   hasReportReason,
   isApprovedReportReason,
   isBlankReportDetails,
+  listingDetailReportControls,
   reportEntryLabel,
   reportFormHeading,
   reportSubmitLabel,
   reportTargetId,
   reportTargetSummary,
   reportValidationMessages,
+  sameEntityId,
   submitBodyMatchesTrustedTarget,
+  toPositiveIntId,
   toReportListingTarget,
   toReportUserTarget,
 } from './reportContent';
@@ -183,5 +186,66 @@ describe('US-20.2 report form and reason controls', () => {
     assert.deepEqual(REPORT_REASON_OPTIONS, []);
     assert.equal(isApprovedReportReason('anything', []), false);
     assert.equal(hasReportReason('free text reason'), true);
+  });
+
+  test('ListingDetailPage: non-owner sees Report listing and Report user with correct targets', () => {
+    const listing = {
+      id: 12,
+      title: 'Campus Camera',
+      owner: { id: 4, first_name: 'Test', last_name: 'Test' },
+    };
+    const controls = listingDetailReportControls(listing, 9);
+
+    assert.equal(controls.isOwner, false);
+    assert.equal(controls.canReportListing, true);
+    assert.equal(controls.canReportOwner, true);
+    assert.equal(controls.listingTarget.type, 'listing');
+    assert.equal(controls.listingTarget.listingId, 12);
+    assert.equal(controls.ownerTarget?.type, 'user');
+    assert.equal(controls.ownerTarget?.userId, 4);
+  });
+
+  test('ListingDetailPage: owner viewing own listing hides self-report controls', () => {
+    const listing = {
+      id: 12,
+      title: 'Campus Camera',
+      owner: { id: 4, first_name: 'Test', last_name: 'Test' },
+    };
+    const controls = listingDetailReportControls(listing, 4);
+
+    assert.equal(controls.isOwner, true);
+    assert.equal(controls.canReportListing, false);
+    assert.equal(controls.canReportOwner, false);
+  });
+
+  test('id type mismatch does not incorrectly hide report controls', () => {
+    // Production JSON may deliver ids as numbers or numeric strings.
+    assert.equal(toPositiveIntId('12'), 12);
+    assert.equal(toPositiveIntId(12), 12);
+    assert.equal(sameEntityId('4', 4), true);
+    assert.equal(sameEntityId('9', 4), false);
+
+    const stringIdListing = {
+      id: '12',
+      title: 'Campus Camera',
+      owner: { id: '4', first_name: 'Test', last_name: 'Test' },
+    };
+    const controls = listingDetailReportControls(stringIdListing, '9');
+
+    assert.equal(controls.isOwner, false);
+    assert.equal(controls.canReportListing, true);
+    assert.equal(controls.canReportOwner, true);
+    assert.equal(controls.listingTarget.listingId, 12);
+    assert.equal(controls.ownerTarget?.userId, 4);
+
+    // Previously Number.isInteger("12") hid both buttons for non-owners.
+    const listingTarget = toReportListingTarget(stringIdListing);
+    const ownerTarget = toReportUserTarget(stringIdListing.owner, {
+      listingId: stringIdListing.id,
+      listingTitle: stringIdListing.title,
+    });
+    assert.equal(canReportTarget('9', listingTarget), true);
+    assert.equal(canReportTarget('9', ownerTarget), true);
+    assert.equal(canReportTarget('4', ownerTarget), false);
   });
 });

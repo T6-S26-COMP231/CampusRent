@@ -32,6 +32,7 @@ import {
   buildSubmitReportCall,
   canReportTarget,
   canSubmitReport,
+  listingDetailReportControls,
   reportFormHeading,
   reportTargetId,
   reportTargetSummary,
@@ -49,29 +50,20 @@ export const US_20_TAC_TEST_4_REASON =
   'Team6 TAC assigns the moderation queue / report-detail admin UI and report-list/detail APIs to US-23.';
 
 /**
- * Mirrors ListingDetailPage report-entry wiring (trusted page context only).
+ * ListingDetailPage report-entry wiring via shared visibility helper.
  */
 function listingDetailReportEntries(
   listing: {
-    id: number;
+    id: number | string;
     title: string;
-    owner?: { id: number; first_name: string; last_name: string } | null;
+    owner?: { id: number | string; first_name: string; last_name: string } | null;
   },
-  viewerId: number | undefined
+  viewerId: number | string | undefined
 ): { listing: ReportTarget | null; owner: ReportTarget | null } {
-  const isOwner = viewerId != null && viewerId === listing.owner?.id;
-  const listingTarget = toReportListingTarget(listing);
-  const ownerTarget = listing.owner
-    ? toReportUserTarget(listing.owner, {
-        listingId: listing.id,
-        listingTitle: listing.title,
-      })
-    : null;
-
+  const controls = listingDetailReportControls(listing, viewerId);
   return {
-    listing: !isOwner && canReportTarget(viewerId, listingTarget) ? listingTarget : null,
-    owner:
-      ownerTarget && canReportTarget(viewerId, ownerTarget) ? ownerTarget : null,
+    listing: controls.canReportListing ? controls.listingTarget : null,
+    owner: controls.canReportOwner ? controls.ownerTarget : null,
   };
 }
 

@@ -17,9 +17,8 @@ import StatusBadge from '../components/StatusBadge';
 import {
   REPORT_LISTING_ENTRY_LABEL,
   REPORT_USER_ENTRY_LABEL,
-  canReportTarget,
-  toReportListingTarget,
-  toReportUserTarget,
+  listingDetailReportControls,
+  sameEntityId,
   type ReportTarget,
 } from '../utils/reportContent';
 import { ConversationTarget } from '../utils/startConversation';
@@ -99,7 +98,15 @@ export default function ListingDetailPage() {
 
   if (!listing) return null;
 
-  const isOwner = user?.id === listing.owner?.id;
+  // Compare with numeric coercion — string/number id mismatch must not hide controls.
+  const isOwner = sameEntityId(user?.id, listing.owner?.id);
+  const {
+    canReportListing,
+    canReportOwner,
+    listingTarget: listingReportTarget,
+    ownerTarget: ownerReportTarget,
+  } = listingDetailReportControls(listing, user?.id);
+
   const ownerConversationTarget: ConversationTarget | null = listing.owner
     ? {
         listingId: listing.id,
@@ -108,17 +115,6 @@ export default function ListingDetailPage() {
         counterpartRole: 'owner',
       }
     : null;
-
-  const listingReportTarget = toReportListingTarget(listing);
-  const ownerReportTarget = listing.owner
-    ? toReportUserTarget(listing.owner, {
-        listingId: listing.id,
-        listingTitle: listing.title,
-      })
-    : null;
-  const canReportListing = !isOwner && canReportTarget(user?.id, listingReportTarget);
-  const canReportOwner =
-    Boolean(ownerReportTarget) && canReportTarget(user?.id, ownerReportTarget);
 
   const activeReportTarget: ReportTarget | null =
     reportPanel === 'listing'

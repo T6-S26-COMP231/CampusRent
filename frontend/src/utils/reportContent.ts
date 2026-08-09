@@ -131,7 +131,7 @@ export interface ReportSubmitGate {
   reason: string;
   details: string;
   submitting: boolean;
-  viewerId: number | undefined;
+  viewerId: number | string | undefined;
 }
 
 export function normalizeReportReason(raw: string): string {
@@ -176,29 +176,49 @@ export function reportSubmitLabel(submitting: boolean): string {
   return submitting ? SUBMITTING_REPORT_LABEL : SUBMIT_REPORT_LABEL;
 }
 
+/**
+ * Coerce API/auth ids that may arrive as numbers or numeric strings.
+ * Number.isInteger("12") is false and previously hid report entry controls.
+ */
+export function toPositiveIntId(value: unknown): number | null {
+  if (typeof value === 'boolean' || value === null || value === undefined || value === '') {
+    return null;
+  }
+  const numeric = typeof value === 'number' ? value : Number(value);
+  if (!Number.isInteger(numeric) || numeric <= 0) return null;
+  return numeric;
+}
+
+/** Ownership / self-target compare that tolerates number-vs-string ids. */
+export function sameEntityId(left: unknown, right: unknown): boolean {
+  const a = toPositiveIntId(left);
+  const b = toPositiveIntId(right);
+  return a != null && b != null && a === b;
+}
+
 /** Build a listing target from the open listing page — never from free text. */
 export function toReportListingTarget(listing: {
-  id: number;
+  id: number | string;
   title: string;
 }): ReportListingTarget {
   return {
     type: 'listing',
-    listingId: listing.id,
+    listingId: toPositiveIntId(listing.id) ?? 0,
     listingTitle: listing.title.trim() || 'Untitled listing',
   };
 }
 
 /** Build a user target from owner/counterpart/renter context — never free text. */
 export function toReportUserTarget(
-  user: { id: number; first_name: string; last_name: string },
-  context?: { listingId?: number; listingTitle?: string }
+  user: { id: number | string; first_name: string; last_name: string },
+  context?: { listingId?: number | string; listingTitle?: string }
 ): ReportUserTarget {
   const userName = `${user.first_name} ${user.last_name}`.trim() || 'CampusRent user';
   return {
     type: 'user',
-    userId: user.id,
+    userId: toPositiveIntId(user.id) ?? 0,
     userName,
-    contextListingId: context?.listingId,
+    contextListingId: toPositiveIntId(context?.listingId) ?? undefined,
     contextListingTitle: context?.listingTitle?.trim() || undefined,
   };
 }
@@ -221,20 +241,61 @@ export function reportTargetSummary(target: ReportTarget): string {
 /**
  * Viewer may report a target when authenticated, target ids are valid,
  * and the viewer is not reporting themselves as a user target.
+ * Viewer/target ids may be numbers or numeric strings from JSON/auth.
  */
 export function canReportTarget(
-  viewerId: number | undefined,
+  viewerId: number | string | undefined,
   target: ReportTarget | null
 ): boolean {
-  if (!viewerId || !target) return false;
+  const viewer = toPositiveIntId(viewerId);
+  if (viewer == null || !target) return false;
   if (target.type === 'listing') {
-    return Number.isInteger(target.listingId) && target.listingId > 0;
+    return toPositiveIntId(target.listingId) != null;
   }
-  return (
-    Number.isInteger(target.userId) &&
-    target.userId > 0 &&
-    target.userId !== viewerId
-  );
+  const userId = toPositiveIntId(target.userId);
+  return userId != null && userId !== viewer;
+}
+
+export interface ListingDetailReportSource {
+  id: number | string;
+  title: string;
+  owner?: {
+    id: number | string;
+    first_name: string;
+    last_name: string;
+  } | null;
+}
+
+/**
+ * ListingDetailPage report-entry visibility (US-20 Test 1).
+ * Non-owners see Report listing + Report user; owners see neither self-report control.
+ */
+export function listingDetailReportControls(
+  listing: ListingDetailReportSource,
+  viewerId: number | string | undefined
+): {
+  isOwner: boolean;
+  canReportListing: boolean;
+  canReportOwner: boolean;
+  listingTarget: ReportListingTarget;
+  ownerTarget: ReportUserTarget | null;
+} {
+  const isOwner = sameEntityId(viewerId, listing.owner?.id);
+  const listingTarget = toReportListingTarget(listing);
+  const ownerTarget = listing.owner
+    ? toReportUserTarget(listing.owner, {
+        listingId: listing.id,
+        listingTitle: listing.title,
+      })
+    : null;
+
+  return {
+    isOwner,
+    listingTarget,
+    ownerTarget,
+    canReportListing: !isOwner && canReportTarget(viewerId, listingTarget),
+    canReportOwner: Boolean(ownerTarget) && canReportTarget(viewerId, ownerTarget),
+  };
 }
 
 export function reportValidationMessages(gate: Pick<ReportSubmitGate, 'reason' | 'details'>): {
