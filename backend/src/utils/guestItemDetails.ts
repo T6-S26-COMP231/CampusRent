@@ -1,11 +1,13 @@
 /**
- * US-02.3 — public guest basic item-details serialization.
+ * US-02.3 / US-02.4 — public guest basic item-details serialization.
  *
  * GET /api/guest/listings/:id returns an allow-listed payload only.
  * Never reuses formatListing (owner/contact/rental_terms/images).
  * Description is included (unlike US-01 catalogue previews).
- * Unavailable listings are returned with their real availability status.
+ * Unavailable listings are returned with their real availability status
+ * (never 404 / never coerced to available).
  *
+ * US-02.4 hardens allow-list + availability enforcement.
  * Frontend wiring belongs to US-02.5 (#200). Registered
  * GET /api/listings/:id remains authenticate + requireVerifiedStudent.
  */
@@ -22,6 +24,14 @@ export const GUEST_ITEM_DETAILS_FIELDS = [
 ] as const;
 
 export type GuestItemDetailsField = (typeof GUEST_ITEM_DETAILS_FIELDS)[number];
+
+export const GUEST_ITEM_DETAILS_AVAILABILITY_VALUES = [
+  'available',
+  'unavailable',
+] as const;
+
+export type GuestItemDetailsAvailability =
+  (typeof GUEST_ITEM_DETAILS_AVAILABILITY_VALUES)[number];
 
 /** Fields that must never appear on guest item-details payloads. */
 export const GUEST_ITEM_DETAILS_HIDDEN_FIELDS = [
@@ -52,22 +62,42 @@ export interface GuestItemDetails {
   title: string;
   category: string;
   description: string;
-  availability: 'available' | 'unavailable';
+  availability: GuestItemDetailsAvailability;
 }
 
-/** Construct guest details from the allow-list only. Never spreads formatListing. */
+/** Only the existing listing availability enum — never invent other states. */
+export function normalizeGuestItemDetailsAvailability(
+  value: unknown
+): GuestItemDetailsAvailability | null {
+  if (value === 'available' || value === 'unavailable') {
+    return value;
+  }
+  return null;
+}
+
+/**
+ * Construct guest details from the allow-list only. Never spreads formatListing.
+ * Availability is normalized to available|unavailable; invalid values are rejected.
+ */
 export function toGuestItemDetails(
   listing: Pick<
     ListingDoc,
     '_id' | 'title' | 'category' | 'description' | 'availability'
   >
 ): GuestItemDetails {
+  const availability = normalizeGuestItemDetailsAvailability(
+    listing.availability
+  );
+  if (!availability) {
+    // Defensive: schema enum should prevent this; never invent "available".
+    throw new Error('Invalid listing availability');
+  }
   return pickGuestItemDetailsAllowList({
     id: listing._id,
     title: listing.title,
     category: listing.category,
     description: listing.description,
-    availability: listing.availability,
+    availability,
   });
 }
 
@@ -75,13 +105,22 @@ export function toGuestItemDetails(
 export function pickGuestItemDetailsAllowList(
   value: GuestItemDetails
 ): GuestItemDetails {
+  const availability = normalizeGuestItemDetailsAvailability(value.availability);
   return {
     id: value.id,
     title: value.title,
     category: value.category,
     description: value.description,
-    availability: value.availability,
+    // Preserve unavailable; never silently promote unknown values to available.
+    availability: availability ?? 'unavailable',
   };
+}
+
+/** Unavailable listings remain viewable as guest basic details (US-02 Test 4). */
+export function guestItemDetailsRemainsViewableWhenUnavailable(
+  availability: GuestItemDetailsAvailability
+): boolean {
+  return availability === 'available' || availability === 'unavailable';
 }
 
 /** True when an object’s own keys are exactly the approved guest details fields. */

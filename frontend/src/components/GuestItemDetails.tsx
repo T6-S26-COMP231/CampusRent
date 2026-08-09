@@ -29,8 +29,9 @@ export interface GuestItemDetailsProps {
 }
 
 /**
- * US-02.2 — guest basic item-details presentation.
- * Props/state driven only; no guest details API call in this task (#200).
+ * US-02.2 / US-02.4 — guest basic item-details presentation.
+ * Props/state driven only; no guest details API call yet (#200).
+ * Allow-list re-projection hides owner/contact. Unavailable status stays visible.
  * Request Rental opens the existing US-01 registration prompt before any API.
  */
 export default function GuestItemDetails({
@@ -48,12 +49,14 @@ export default function GuestItemDetails({
     hasDetails: Boolean(details),
   });
 
-  const handleRequestRental = () => {
-    const result = attemptGuestItemDetailsRentalRequestUi();
+  const handleRequestRental = (availability: 'available' | 'unavailable') => {
+    // Availability never enables a real rental API call for guests.
+    const result = attemptGuestItemDetailsRentalRequestUi(availability);
     if (
       result.blocked_before_api &&
       !result.apiCalled &&
       !result.success &&
+      !result.rental_enabled &&
       result.show_registration_prompt
     ) {
       setShowRegistrationPrompt(true);
@@ -139,6 +142,7 @@ export default function GuestItemDetails({
     );
   }
 
+  // Re-project before render — never trust a full Listing-shaped prop.
   const safeDetails = pickGuestItemDetailsAllowList(details);
   const view = guestItemDetailsView(safeDetails);
 
@@ -148,6 +152,7 @@ export default function GuestItemDetails({
       aria-label={GUEST_ITEM_DETAILS_SECTION_LABEL}
       data-testid="guest-item-details"
       data-listing-id={view.id}
+      data-availability={view.availability}
     >
       <Link
         to={view.back_path}
@@ -179,10 +184,18 @@ export default function GuestItemDetails({
             </h1>
           </div>
           <div
+            className="text-right"
             data-testid="guest-item-details-availability"
-            aria-label={GUEST_ITEM_DETAILS_AVAILABILITY_LABEL}
+            data-availability={view.availability}
+            aria-label={`${GUEST_ITEM_DETAILS_AVAILABILITY_LABEL}: ${view.availability_display_label}`}
           >
+            <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">
+              {GUEST_ITEM_DETAILS_AVAILABILITY_LABEL}
+            </p>
             <StatusBadge status={view.availability} />
+            <span className="sr-only" data-testid="guest-item-details-availability-text">
+              {view.availability_display_label}
+            </span>
           </div>
         </div>
 
@@ -202,11 +215,20 @@ export default function GuestItemDetails({
           <button
             type="button"
             className="btn-primary"
-            onClick={handleRequestRental}
+            onClick={() => handleRequestRental(view.availability)}
             data-testid="guest-item-details-request-rental"
           >
             {GUEST_ITEM_DETAILS_REQUEST_RENTAL_CTA_LABEL}
           </button>
+          {view.is_unavailable && (
+            <p
+              className="mt-3 text-sm text-slate-500"
+              data-testid="guest-item-details-unavailable-note"
+            >
+              This item is currently unavailable. Registration is still required
+              before requesting a rental.
+            </p>
+          )}
         </div>
       </div>
 

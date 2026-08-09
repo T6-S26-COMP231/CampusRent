@@ -30,9 +30,8 @@
  *   Later US-02 tasks open guest basic details on that path without making
  *   the registered full-details API public. #198 owns GET /api/guest/listings/:id.
  *
- * Contracts used by GuestItemDetails UI (#197).
+ * Contracts used by GuestItemDetails UI (#197) and privacy/status hardening (#199).
  * Still out of scope here:
- *   - guest details API (#198)
  *   - App routing change / API wiring (#200)
  */
 
@@ -100,13 +99,21 @@ export const GUEST_ITEM_DETAILS_HIDDEN_FIELDS = [
 export type GuestItemDetailsHiddenField =
   (typeof GUEST_ITEM_DETAILS_HIDDEN_FIELDS)[number];
 
+export const GUEST_ITEM_DETAILS_AVAILABILITY_VALUES = [
+  'available',
+  'unavailable',
+] as const;
+
+export type GuestItemDetailsAvailability =
+  (typeof GUEST_ITEM_DETAILS_AVAILABILITY_VALUES)[number];
+
 /** Dedicated guest details shape — never a full authenticated Listing. */
 export interface GuestItemDetails {
   id: number;
   title: string;
   category: GuestListingCategory | string;
   description: string;
-  availability: 'available' | 'unavailable';
+  availability: GuestItemDetailsAvailability;
 }
 
 /** Intended future public guest details response (#198). */
@@ -272,37 +279,104 @@ export function parseGuestItemDetailsIdParam(raw: unknown): {
   return { id: value, error: '' };
 }
 
+/** Only the existing listing availability enum — never invent other states. */
+export function normalizeGuestItemDetailsAvailability(
+  value: unknown
+): GuestItemDetailsAvailability | null {
+  if (value === 'available' || value === 'unavailable') {
+    return value;
+  }
+  return null;
+}
+
 /**
  * Construct guest details from the allow-list only.
  * Extra owner/contact/rental_terms/image fields on the input are ignored.
+ * Accepts id or _id so a richer listing-shaped object cannot leak through.
  */
 export function toGuestItemDetails(listing: {
-  id: number;
+  id?: number;
+  _id?: number;
   title: string;
   category: string;
   description: string;
-  availability: 'available' | 'unavailable';
+  availability: GuestItemDetailsAvailability | string;
 }): GuestItemDetails {
+  const id =
+    typeof listing.id === 'number' && Number.isFinite(listing.id)
+      ? listing.id
+      : typeof listing._id === 'number' && Number.isFinite(listing._id)
+        ? listing._id
+        : NaN;
+  const availability = normalizeGuestItemDetailsAvailability(
+    listing.availability
+  );
+  if (!Number.isInteger(id) || id <= 0 || !availability) {
+    throw new Error(GUEST_ITEM_DETAILS_LOAD_ERROR_FALLBACK);
+  }
   return pickGuestItemDetailsAllowList({
-    id: listing.id,
+    id,
     title: listing.title,
     category: listing.category,
     description: listing.description,
-    availability: listing.availability,
+    availability,
   });
+}
+
+/**
+ * Map a guest details API/envelope payload through the allow-list only.
+ * Extra owner/contact/rental_terms keys are dropped before UI use.
+ */
+export function mapGuestItemDetailsFromApi(
+  value: unknown
+): GuestItemDetails | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return null;
+  }
+  const root = value as Record<string, unknown>;
+  const listing =
+    root.listing && typeof root.listing === 'object' && !Array.isArray(root.listing)
+      ? (root.listing as Record<string, unknown>)
+      : root;
+
+  if (typeof listing.title !== 'string') return null;
+  if (typeof listing.category !== 'string') return null;
+  if (typeof listing.description !== 'string') return null;
+
+  try {
+    return toGuestItemDetails({
+      id: typeof listing.id === 'number' ? listing.id : undefined,
+      _id: typeof listing._id === 'number' ? listing._id : undefined,
+      title: listing.title,
+      category: listing.category,
+      description: listing.description,
+      availability: String(listing.availability),
+    });
+  } catch {
+    return null;
+  }
 }
 
 /** Re-project through the allow-list so extra keys cannot leak. */
 export function pickGuestItemDetailsAllowList(
   value: GuestItemDetails
 ): GuestItemDetails {
+  const availability = normalizeGuestItemDetailsAvailability(value.availability);
   return {
     id: value.id,
     title: value.title,
     category: value.category,
     description: value.description,
-    availability: value.availability,
+    // Preserve unavailable; never silently promote unknown values to available.
+    availability: availability ?? 'unavailable',
   };
+}
+
+/** Unavailable listings remain viewable as guest basic details (US-02 Test 4). */
+export function guestItemDetailsRemainsViewableWhenUnavailable(
+  availability: GuestItemDetailsAvailability
+): boolean {
+  return availability === 'available' || availability === 'unavailable';
 }
 
 export function guestItemDetailsKeysMatchAllowList(value: unknown): boolean {
@@ -354,6 +428,13 @@ export function guestItemDetailsAvailabilityLabel(
   return availability === 'available' ? 'available' : 'unavailable';
 }
 
+/** Display copy for StatusBadge / availability presentation. */
+export function guestItemDetailsAvailabilityDisplayLabel(
+  availability: GuestItemDetails['availability']
+): string {
+  return availability === 'available' ? 'Available' : 'Unavailable';
+}
+
 /**
  * Safe display props for the future guest details page.
  * Shows real availability for both available and unavailable items.
@@ -363,8 +444,11 @@ export function guestItemDetailsView(details: GuestItemDetails): {
   title: string;
   category: string;
   description: string;
-  availability: 'available' | 'unavailable';
+  availability: GuestItemDetailsAvailability;
   availability_label: string;
+  availability_display_label: string;
+  is_unavailable: boolean;
+  remains_viewable: true;
   back_path: string;
   back_label: string;
   request_rental_label: string;
@@ -374,6 +458,7 @@ export function guestItemDetailsView(details: GuestItemDetails): {
   shows_messaging: false;
   shows_reviews: false;
   shows_rental_dates: false;
+  can_submit_rental_request: false;
 } {
   const safe = pickGuestItemDetailsAllowList(details);
   return {
@@ -383,6 +468,11 @@ export function guestItemDetailsView(details: GuestItemDetails): {
     description: safe.description,
     availability: safe.availability,
     availability_label: guestItemDetailsAvailabilityLabel(safe.availability),
+    availability_display_label: guestItemDetailsAvailabilityDisplayLabel(
+      safe.availability
+    ),
+    is_unavailable: safe.availability === 'unavailable',
+    remains_viewable: true,
     back_path: GUEST_ITEM_DETAILS_BACK_PATH,
     back_label: GUEST_ITEM_DETAILS_BACK_LABEL,
     request_rental_label: GUEST_ITEM_DETAILS_REQUEST_RENTAL_CTA_LABEL,
@@ -392,6 +482,8 @@ export function guestItemDetailsView(details: GuestItemDetails): {
     shows_messaging: false,
     shows_reviews: false,
     shows_rental_dates: false,
+    // Guests never submit rentals — availability does not unlock the API.
+    can_submit_rental_request: false,
   };
 }
 
@@ -417,8 +509,11 @@ export function guestItemDetailsUiStatus(options: {
 /**
  * Guest Request Rental on item details — reuse US-01 prompt contracts.
  * Blocks before any rental API call and never claims success.
+ * Availability does not enable a real rental request for guests.
  */
-export function attemptGuestItemDetailsRentalRequestUi(): {
+export function attemptGuestItemDetailsRentalRequestUi(
+  availability?: GuestItemDetailsAvailability
+): {
   prompt: ReturnType<typeof guestRegistrationPromptForAction>;
   success: false;
   apiCalled: false;
@@ -427,6 +522,8 @@ export function attemptGuestItemDetailsRentalRequestUi(): {
   restricted_action: 'request_rental';
   register_path: typeof GUEST_REGISTER_PATH;
   sign_in_path: typeof GUEST_SIGN_IN_PATH;
+  listing_availability: GuestItemDetailsAvailability | null;
+  rental_enabled: false;
 } {
   const attempt = attemptGuestRestrictedActionUi('request_rental');
   return {
@@ -434,6 +531,8 @@ export function attemptGuestItemDetailsRentalRequestUi(): {
     restricted_action: 'request_rental',
     register_path: GUEST_REGISTER_PATH,
     sign_in_path: GUEST_SIGN_IN_PATH,
+    listing_availability: normalizeGuestItemDetailsAvailability(availability),
+    rental_enabled: false,
   };
 }
 
