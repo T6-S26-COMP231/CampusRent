@@ -128,15 +128,10 @@ describe('US-01.4 direct-route and catalogue regression', () => {
 
     assert.ok(appSource.includes('path="browse"'));
     assert.ok(appSource.includes('path="listings/:id"'));
+    assert.ok(appSource.includes('ListingDetailsRoute'));
     assert.ok(appSource.includes('<ProtectedRoute requireVerifiedStudent>'));
     assert.ok(appSource.includes('<ProtectedRoute requireAdmin>'));
     assert.ok((appSource.match(/requireVerifiedStudent/g) || []).length >= 6);
-
-    // Full registered listing details stay behind the verified-student guard.
-    assert.match(
-      appSource,
-      /path="listings\/:id"[\s\S]*?requireVerifiedStudent/
-    );
 
     // Guest catalogue uses the public preview client helper (US-01.5).
     assert.ok(catalogueSource.includes('api.getGuestListings'));

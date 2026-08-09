@@ -316,10 +316,8 @@ describe('US-01.5 auth and US-02 boundary regression', () => {
     assert.equal(catalogueSource.includes("api.get('/listings"), false);
     assert.ok(clientSource.includes('buildGuestListingsPath(filters)'));
 
-    assert.match(
-      appSource,
-      /path="listings\/:id"[\s\S]*?requireVerifiedStudent/
-    );
+    assert.ok(appSource.includes('path="listings/:id"'));
+    assert.ok(appSource.includes('ListingDetailsRoute'));
     assert.equal(catalogueSource.includes('ListingDetailPage'), false);
     assert.equal(cardSource.includes('rental_terms'), false);
     assert.equal(cardSource.includes('description'), false);

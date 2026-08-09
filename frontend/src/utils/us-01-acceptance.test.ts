@@ -339,10 +339,8 @@ describe('US-01 TAC frontend acceptance regressions', () => {
     assert.ok(clientSource.includes('getGuestListings'));
 
     assert.equal(guestPreviewSelectionIntent(), 'navigate_guest_details_us02');
-    assert.match(
-      appSource,
-      /path="listings\/:id"[\s\S]*?requireVerifiedStudent/
-    );
+    assert.ok(appSource.includes('path="listings/:id"'));
+    assert.ok(appSource.includes('ListingDetailsRoute'));
     assert.equal(catalogueSource.includes('ListingDetailPage'), false);
     assert.equal(cardSource.includes('rental_terms'), false);
     assert.equal(cardSource.includes('description'), false);

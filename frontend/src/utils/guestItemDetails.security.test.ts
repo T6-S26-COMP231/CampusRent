@@ -109,7 +109,7 @@ describe('US-02.4 guest item-details privacy', () => {
     assert.equal(detailsSource.includes('rental_terms'), false);
     assert.equal(detailsSource.includes('api.get'), false);
     assert.equal(detailsSource.includes('fetch('), false);
-    assert.equal(detailsSource.includes('/api/guest/listings'), false);
+    assert.equal(detailsSource.includes('getGuestListingDetails'), false);
   });
 });
 
@@ -192,12 +192,9 @@ describe('US-02.4 rental CTA and registered regression', () => {
     assert.equal(detailsSource.includes('Rental request submitted'), false);
   });
 
-  test('US-10 registered details remain unchanged; guest route not opened yet', () => {
-    assert.match(
-      appSource,
-      /path="listings\/:id"[\s\S]*?requireVerifiedStudent/
-    );
-    assert.equal(appSource.includes('GuestItemDetails'), false);
+  test('US-10 registered details remain available via ListingDetailsRoute', () => {
+    assert.ok(appSource.includes('ListingDetailsRoute'));
+    assert.ok(appSource.includes('path="listings/:id"'));
     assert.ok(listingDetailSource.includes('listing.owner'));
     assert.ok(listingDetailSource.includes('listing.rental_terms'));
     assert.ok(listingDetailSource.includes("api.post<RentalRequest>('/requests'"));

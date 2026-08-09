@@ -220,18 +220,16 @@ describe('US-02.2 guest item-details states and boundaries', () => {
     assert.ok(detailsSource.includes("to={view.back_path}"));
   });
 
-  test('no API integration, route remains protected, US-10 details unchanged', () => {
-    assert.equal(detailsSource.includes('/api/guest/listings'), false);
-    assert.equal(detailsSource.includes('getGuestItemDetails'), false);
+  test('component stays props-driven; US-10 details page unchanged', () => {
+    // GuestItemDetails itself remains presentation-only; route page owns fetching.
+    assert.equal(detailsSource.includes('getGuestListingDetails'), false);
     assert.equal(detailsSource.includes('buildGuestItemDetailsApiPath'), false);
+    assert.equal(detailsSource.includes('fetch('), false);
     assert.equal(detailsSource.includes('Math.random'), false);
     assert.equal(detailsSource.includes('FAKE_'), false);
 
-    assert.match(
-      appSource,
-      /path="listings\/:id"[\s\S]*?requireVerifiedStudent/
-    );
-    assert.equal(appSource.includes('GuestItemDetails'), false);
+    assert.ok(appSource.includes('ListingDetailsRoute'));
+    assert.ok(appSource.includes('path="listings/:id"'));
 
     assert.ok(listingDetailSource.includes('listing.owner'));
     assert.ok(listingDetailSource.includes('listing.rental_terms'));
