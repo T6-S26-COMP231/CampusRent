@@ -176,6 +176,27 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(body),
     }),
+
+  /** US-23.6 — admin moderation queue list. */
+  getAdminReports: (): Promise<AdminModerationReportView[]> =>
+    request<AdminModerationReportView[]>('/admin/reports'),
+
+  /** US-23.6 — admin moderation report detail. */
+  getAdminReport: (reportId: number): Promise<AdminModerationReportView> =>
+    request<AdminModerationReportView>(`/admin/reports/${reportId}`),
+
+  /**
+   * US-23.6 — perform a moderation action.
+   * Body is { action } only — never administrator_id / target_id / target_type.
+   */
+  performModerationAction: (
+    reportId: number,
+    action: ModerationActionName
+  ): Promise<AdminModerationActionResult> =>
+    request<AdminModerationActionResult>(`/admin/reports/${reportId}/actions`, {
+      method: 'POST',
+      body: JSON.stringify({ action }),
+    }),
 };
 
 export interface User {
@@ -280,5 +301,78 @@ export interface Report {
   target_id: number;
   reason: string;
   details: string;
+  status?: 'open' | 'resolved' | 'dismissed';
   created_at: string;
+}
+
+/** US-23 admin moderation action names. */
+export type ModerationActionName =
+  | 'warn'
+  | 'remove_listing'
+  | 'suspend_user'
+  | 'dismiss'
+  | 'resolve';
+
+export type ModerationStatusName = 'open' | 'resolved' | 'dismissed';
+
+export interface AdminModerationReportDetail {
+  report_id: number;
+  reporter_id: number;
+  reporter: {
+    id: number;
+    first_name: string;
+    last_name: string;
+    email: string;
+  } | null;
+  reporter_label: string;
+  reason: string;
+  details: string;
+  created_at: string;
+  status: ModerationStatusName;
+  target_type: ReportTargetType;
+  target_id: number;
+}
+
+export interface AdminListingTargetView {
+  target_type: 'listing';
+  listing_id: number;
+  exists: boolean;
+  title: string | null;
+  owner_id: number | null;
+  owner_label: string | null;
+  category: string | null;
+  availability: 'available' | 'unavailable' | null;
+  description_preview: string | null;
+}
+
+export interface AdminUserTargetView {
+  target_type: 'user';
+  user_id: number;
+  exists: boolean;
+  display_name: string | null;
+  email: string | null;
+  verification_status: 'pending' | 'verified' | 'rejected' | null;
+  account_status: 'active' | 'suspended' | null;
+}
+
+export type AdminModerationTargetView = AdminListingTargetView | AdminUserTargetView;
+
+/** Compatible with frontend ModerationReportView. */
+export interface AdminModerationReportView {
+  report: AdminModerationReportDetail;
+  target: AdminModerationTargetView;
+}
+
+export interface AdminModerationActionResult {
+  action: ModerationActionName;
+  report: AdminModerationReportDetail;
+  target: AdminModerationTargetView;
+  audit: {
+    id: number;
+    report_id: number;
+    administrator_id: number;
+    action: ModerationActionName;
+    created_at: string;
+  };
+  message: string;
 }

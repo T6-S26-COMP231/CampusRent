@@ -1,21 +1,20 @@
 import mongoose, { Schema } from 'mongoose';
 
 /**
- * US-20.3 — Report persistence.
+ * US-20.3 / US-23.5 — Report persistence.
  *
  * One collection for both user and listing reports (target_type + target_id).
  * Reporter is stored as a user id only — never from editable frontend identity
  * fields. Reason and details are required, trimmed, non-empty.
  *
- * Submit API, target-existence checks, and category enforcement belong to
- * US-20.4 / US-20.5. Moderation dashboard / actions belong to US-23.
- *
- * Indexes support later admin listing (created_at) and lookup by target or
- * reporter without inventing moderation status fields.
+ * US-23.5 adds moderation status: open | resolved | dismissed (default open).
  */
 
 export const REPORT_TARGET_TYPES = ['user', 'listing'] as const;
 export type ReportTargetType = (typeof REPORT_TARGET_TYPES)[number];
+
+export const REPORT_MODERATION_STATUSES = ['open', 'resolved', 'dismissed'] as const;
+export type ReportModerationStatus = (typeof REPORT_MODERATION_STATUSES)[number];
 
 export interface ReportDoc {
   _id: number;
@@ -24,6 +23,7 @@ export interface ReportDoc {
   target_id: number;
   reason: string;
   details: string;
+  status: ReportModerationStatus;
   created_at: Date;
 }
 
@@ -108,6 +108,12 @@ const reportSchema = new Schema<ReportDoc>(
     target_id: { type: Number, required: true, index: true, min: 1 },
     reason: { type: String, required: true, trim: true },
     details: { type: String, required: true, trim: true },
+    status: {
+      type: String,
+      enum: REPORT_MODERATION_STATUSES,
+      default: 'open',
+      index: true,
+    },
     created_at: { type: Date, default: Date.now },
   },
   { versionKey: false }
@@ -122,6 +128,8 @@ reportSchema.index(
   { name: 'idx_report_target' }
 );
 
+reportSchema.index({ status: 1, created_at: -1 }, { name: 'idx_report_status' });
+
 reportSchema.pre('validate', function () {
   const ids = assertReportIdentifiers(this.reporter_id, this.target_type, this.target_id);
   this.reporter_id = ids.reporter_id;
@@ -134,7 +142,16 @@ reportSchema.pre('validate', function () {
 export const Report =
   mongoose.models.Report || mongoose.model<ReportDoc>('Report', reportSchema);
 
-/** API-facing row shape for later submit/list endpoints (US-20.4 / US-23). */
+export function normalizeReportModerationStatus(
+  status: ReportModerationStatus | undefined | null
+): ReportModerationStatus {
+  if (status && (REPORT_MODERATION_STATUSES as readonly string[]).includes(status)) {
+    return status;
+  }
+  return 'open';
+}
+
+/** API-facing row shape for submit/list endpoints (US-20.4 / US-23). */
 export function toReportRow(report: ReportDoc) {
   return {
     id: report._id,
@@ -143,6 +160,7 @@ export function toReportRow(report: ReportDoc) {
     target_id: report.target_id,
     reason: report.reason,
     details: report.details,
+    status: normalizeReportModerationStatus(report.status),
     created_at: report.created_at.toISOString(),
   };
 }
