@@ -33,7 +33,7 @@ export default function HomePage() {
         <div className="relative mx-auto max-w-7xl px-4 py-20 sm:px-6 sm:py-28">
           <div className="max-w-2xl">
             <p className="mb-4 inline-flex items-center gap-2 rounded-full bg-white/10 px-4 py-1.5 text-sm font-medium backdrop-blur">
-              <BookOpen className="h-4 w-4" /> CampusRent · Iteration 1
+              <BookOpen className="h-4 w-4" /> CampusRent · Iteration 2
             </p>
             <h1 className="font-display text-4xl font-extrabold leading-tight sm:text-5xl lg:text-6xl">
               Rent what you need.
@@ -95,7 +95,7 @@ export default function HomePage() {
 
       <section className="bg-campus-50/50 py-16">
         <div className="mx-auto max-w-7xl px-4 text-center sm:px-6">
-          <h2 className="font-display text-3xl font-bold text-campus-900">Iteration 1 workflow</h2>
+          <h2 className="font-display text-3xl font-bold text-campus-900">Iteration 2 workflow</h2>
           <div className="mt-10 grid gap-6 md:grid-cols-4">
             {[
               'Register with an institutional email',

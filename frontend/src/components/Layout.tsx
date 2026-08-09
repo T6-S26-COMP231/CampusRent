@@ -47,7 +47,7 @@ export default function Layout() {
                 CampusRent
               </span>
               <span className="hidden text-[10px] font-semibold uppercase tracking-[0.2em] text-slate-400 sm:block">
-                Iteration 1 test bed
+                Iteration 2 test bed
               </span>
             </div>
           </Link>
@@ -153,7 +153,7 @@ export default function Layout() {
             <span className="font-display font-bold text-campus-950">CampusRent</span>
           </div>
           <p className="text-sm text-slate-500">Verified students sharing useful items within their campus community.</p>
-          <p className="text-xs text-slate-400">COMP 231 · Team 1 · Iteration 1</p>
+          <p className="text-xs text-slate-400">COMP 231 · Team 6 · Iteration 2</p>
         </div>
       </footer>
     </div>
