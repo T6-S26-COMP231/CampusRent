@@ -1,14 +1,17 @@
 /**
- * US-01.3 — limited guest listing preview serialization and query helpers.
+ * US-01.3 / US-01.4 — limited guest listing preview serialization and query helpers.
  *
- * Public guests may browse/search previews without auth. Responses contain
- * only approved preview fields — never owner/contact/description/rental_terms.
+ * Public guests may browse/search previews without auth. Responses are built
+ * with an allow-list of approved preview fields — never by stripping fields
+ * from formatListing (which includes owner/contact/description).
  *
  * Keyword matching reuses US-09 semantics (title + description) for filtering
- * only; description must never appear in the serialized guest payload.
+ * only; description must never appear in the serialized guest payload and
+ * search must not reveal matching description snippets.
  *
- * Frontend wiring belongs to US-01.5 (#192). Protected-field/restricted-action
- * polish beyond this serializer belongs to US-01.4 (#191).
+ * US-01.4 hardens allow-list enforcement and documents that registered
+ * listing/rental/messaging/profile APIs remain behind auth middleware.
+ * Frontend wiring belongs to US-01.5 (#192). US-02 owns guest item details.
  */
 
 import type { ListingDoc } from '../models/Listing';
@@ -68,16 +71,43 @@ export function guestListingThumbnailUrl(
 }
 
 /**
- * Dedicated guest serializer — do not reuse formatListing (leaks owner/contact).
+ * Construct a guest preview from the allow-list only.
+ * Never spreads a ListingDoc / formatListing result.
  */
 export function toGuestListingPreview(listing: ListingDoc): GuestListingPreview {
-  return {
+  return pickGuestListingPreviewAllowList({
     id: listing._id,
     title: listing.title,
     category: listing.category,
     availability: listing.availability,
     thumbnail_url: guestListingThumbnailUrl(listing),
+  });
+}
+
+/** Re-project through the allow-list so extra keys cannot leak. */
+export function pickGuestListingPreviewAllowList(
+  value: GuestListingPreview
+): GuestListingPreview {
+  return {
+    id: value.id,
+    title: value.title,
+    category: value.category,
+    availability: value.availability,
+    thumbnail_url: value.thumbnail_url,
   };
+}
+
+/** True when an object’s own keys are exactly the approved guest preview fields. */
+export function guestPreviewKeysMatchAllowList(value: unknown): boolean {
+  if (value == null || typeof value !== 'object' || Array.isArray(value)) {
+    return false;
+  }
+  const keys = Object.keys(value).sort();
+  const allowed = [...GUEST_LISTING_PREVIEW_FIELDS].sort();
+  return (
+    keys.length === allowed.length &&
+    keys.every((key, index) => key === allowed[index])
+  );
 }
 
 export function buildGuestListingFilter(query: {

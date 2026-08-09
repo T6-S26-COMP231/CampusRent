@@ -35,9 +35,10 @@
  *   /browse and GET /api/listings require verified student.
  *   US-01 later tasks open a guest catalogue path + public preview API.
  *
- * US-01.2 adds GuestCatalogue / GuestListingCard / registration-prompt UI.
- * Guest preview API (#190) and frontend↔backend wiring (#192) come later —
- * the UI accepts supplied preview rows and must not call a guest endpoint yet.
+ * US-01.2 UI + US-01.4 restricted-action / privacy hardening:
+ *   Guest cards accept GuestListingPreview only (never a full Listing).
+ *   Restricted actions open the registration prompt before any API call.
+ * Guest preview API exists (#190); frontend↔backend wiring is #192.
  */
 
 /** Same listing categories enforced by backend/src/utils/validation.ts. */
@@ -136,6 +137,7 @@ export const GUEST_LOADING_LABEL = 'Loading guest listings...';
 export const GUEST_SEARCH_SUBMIT_LABEL = 'Search';
 export const GUEST_CREATE_LISTING_CTA_LABEL = 'Create a listing';
 export const GUEST_REQUEST_RENTAL_CTA_LABEL = 'Request rental';
+export const GUEST_MESSAGE_OWNER_CTA_LABEL = 'Message owner';
 
 /** Registration / sign-in prompt copy for restricted guest actions. */
 export const GUEST_REGISTRATION_PROMPT_HEADING = 'Registration required';
@@ -343,8 +345,8 @@ export function guestRegistrationPromptForAction(action: GuestRestrictedAction):
 }
 
 /**
- * Build a limited preview from a full listing-shaped object.
- * Strips owner/contact/private fields. Never fabricates listings.
+ * Build a limited preview from listing-shaped input using the allow-list only.
+ * Extra owner/contact/description fields on the input are ignored, not copied.
  */
 export function toGuestListingPreview(listing: {
   id: number;
@@ -362,13 +364,38 @@ export function toGuestListingPreview(listing: {
         ? fromImages.trim()
         : null;
 
-  return {
+  return pickGuestListingPreviewAllowList({
     id: listing.id,
     title: listing.title,
     category: listing.category,
     availability: listing.availability,
     thumbnail_url: thumbnail,
+  });
+}
+
+/** Re-project through the allow-list so extra keys cannot leak into card props. */
+export function pickGuestListingPreviewAllowList(
+  value: GuestListingPreview
+): GuestListingPreview {
+  return {
+    id: value.id,
+    title: value.title,
+    category: value.category,
+    availability: value.availability,
+    thumbnail_url: value.thumbnail_url,
   };
+}
+
+export function guestPreviewKeysMatchAllowList(value: unknown): boolean {
+  if (value == null || typeof value !== 'object' || Array.isArray(value)) {
+    return false;
+  }
+  const keys = Object.keys(value).sort();
+  const allowed = [...GUEST_PREVIEW_FIELDS].sort();
+  return (
+    keys.length === allowed.length &&
+    keys.every((key, index) => key === allowed[index])
+  );
 }
 
 /** True when an object (or nested plain object) contains a guest-hidden key. */
@@ -468,8 +495,8 @@ export function guestCatalogueUiStatus(options: {
 }
 
 /**
- * Restricted-action attempt for guests — opens the registration prompt only.
- * Never marks the action as succeeded and never implies an API call.
+ * Restricted-action attempt for guests — block before any API call, then
+ * open the registration prompt only. Never marks the action as succeeded.
  */
 export function attemptGuestRestrictedActionUi(
   action: GuestRestrictedAction
@@ -477,12 +504,23 @@ export function attemptGuestRestrictedActionUi(
   prompt: ReturnType<typeof guestRegistrationPromptForAction>;
   success: false;
   apiCalled: false;
+  blocked_before_api: true;
+  show_registration_prompt: true;
 } {
   return {
     prompt: guestRegistrationPromptForAction(action),
     success: false,
     apiCalled: false,
+    blocked_before_api: true,
+    show_registration_prompt: true,
   };
+}
+
+/** True when the action is guest-restricted and must not hit registered APIs. */
+export function guestActionRequiresRegistration(
+  action: string
+): action is GuestRestrictedAction {
+  return isGuestRestrictedAction(action);
 }
 
 /** Safe display props for a guest preview card (approved fields only). */

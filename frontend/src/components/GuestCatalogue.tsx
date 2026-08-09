@@ -76,8 +76,14 @@ export default function GuestCatalogue({
   };
 
   const handleRestrictedAction = (action: GuestRestrictedAction) => {
+    // Block before any registered API call — prompt only.
     const result = attemptGuestRestrictedActionUi(action);
-    if (!result.apiCalled && !result.success) {
+    if (
+      result.blocked_before_api &&
+      !result.apiCalled &&
+      !result.success &&
+      result.show_registration_prompt
+    ) {
       setPromptAction(action);
     }
   };

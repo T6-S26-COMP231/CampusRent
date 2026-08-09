@@ -2,30 +2,39 @@ import { Link } from 'react-router-dom';
 import { Package } from 'lucide-react';
 import { assetUrl } from '../api/client';
 import {
+  GUEST_MESSAGE_OWNER_CTA_LABEL,
   GUEST_REQUEST_RENTAL_CTA_LABEL,
   guestListingCardView,
+  pickGuestListingPreviewAllowList,
   type GuestListingPreview,
   type GuestRestrictedAction,
 } from '../utils/guestCatalogue';
 
 export interface GuestListingCardProps {
+  /** Narrow preview shape only — never pass a full Listing object. */
   preview: GuestListingPreview;
   onRestrictedAction?: (action: GuestRestrictedAction) => void;
 }
 
 /**
- * US-01.2 — limited guest listing preview card.
- * Displays only approved preview fields. No description, rental terms, or owner contact.
+ * US-01.2 / US-01.4 — limited guest listing preview card.
+ * Renders allow-listed preview fields only. Restricted CTAs open the
+ * registration prompt and must not call rental/messaging APIs.
  */
 export default function GuestListingCard({
   preview,
   onRestrictedAction,
 }: GuestListingCardProps) {
-  const view = guestListingCardView(preview);
+  const safePreview = pickGuestListingPreviewAllowList(preview);
+  const view = guestListingCardView(safePreview);
   const thumb = view.has_thumbnail ? assetUrl(view.thumbnail_url || '') : '';
 
   const handleRequestRental = () => {
     onRestrictedAction?.('request_rental');
+  };
+
+  const handleMessageOwner = () => {
+    onRestrictedAction?.('start_conversation');
   };
 
   return (
@@ -83,7 +92,7 @@ export default function GuestListingCard({
         </div>
       </Link>
 
-      <div className="border-t border-slate-100 px-4 py-3">
+      <div className="space-y-2 border-t border-slate-100 px-4 py-3">
         <button
           type="button"
           className="btn-secondary w-full !py-2 text-sm"
@@ -91,6 +100,14 @@ export default function GuestListingCard({
           data-testid="guest-listing-card-request-rental"
         >
           {GUEST_REQUEST_RENTAL_CTA_LABEL}
+        </button>
+        <button
+          type="button"
+          className="btn-secondary w-full !py-2 text-sm"
+          onClick={handleMessageOwner}
+          data-testid="guest-listing-card-message-owner"
+        >
+          {GUEST_MESSAGE_OWNER_CTA_LABEL}
         </button>
       </div>
     </article>

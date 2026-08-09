@@ -1,8 +1,10 @@
 /**
- * US-01.3 — public limited guest listing previews.
+ * US-01.3 / US-01.4 — public limited guest listing previews.
  *
  * GET /api/guest/listings — no authenticate / requireVerifiedStudent.
- * Returns only approved preview fields. Does not weaken /api/listings.
+ * Responses use the guest allow-list serializer only.
+ * Does not weaken /api/listings or other registered-student routes.
+ * Does not implement US-02 guest item details.
  */
 import { Router } from 'express';
 import { Listing } from '../models/Listing';
@@ -22,10 +24,12 @@ router.get(
       category: req.query.category,
     });
     if (error) {
+      // Safe client validation only — never Mongo internals or listing payloads.
       return res.status(400).json({ error });
     }
 
     const listings = await Listing.find(filter).sort({ created_at: -1 });
+    // Allow-list construction per row — never formatListing.
     return res.status(200).json({
       listings: listings.map((listing) => toGuestListingPreview(listing)),
     });
