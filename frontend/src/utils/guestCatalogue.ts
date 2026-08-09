@@ -35,13 +35,9 @@
  *   /browse and GET /api/listings require verified student.
  *   US-01 later tasks open a guest catalogue path + public preview API.
  *
- * This module is design/helpers only:
- *   US-01.2 (#189) — guest listing preview cards / search UI
- *   US-01.3 (#190) — guest preview API
- *   US-01.4 (#191) — protected-field enforcement
- *   US-01.5 (#192) — frontend/backend integration
- *   US-01.6 (#193) — acceptance suite
- *   US-01.7 (#194) — deploy / production acceptance
+ * US-01.2 adds GuestCatalogue / GuestListingCard / registration-prompt UI.
+ * Guest preview API (#190) and frontend↔backend wiring (#192) come later —
+ * the UI accepts supplied preview rows and must not call a guest endpoint yet.
  */
 
 /** Same listing categories enforced by backend/src/utils/validation.ts. */
@@ -135,8 +131,11 @@ export const GUEST_KEYWORD_FILTER_LABEL = 'Search';
 export const GUEST_KEYWORD_PLACEHOLDER = 'Search by keyword';
 export const GUEST_CATEGORY_FILTER_LABEL = 'Category';
 export const GUEST_CATEGORY_ALL_LABEL = 'All categories';
-export const GUEST_EMPTY_RESULTS_MESSAGE = 'No matching listing previews found.';
-export const GUEST_LOADING_LABEL = 'Loading listing previews...';
+export const GUEST_EMPTY_RESULTS_MESSAGE = 'No listings match your search.';
+export const GUEST_LOADING_LABEL = 'Loading guest listings...';
+export const GUEST_SEARCH_SUBMIT_LABEL = 'Search';
+export const GUEST_CREATE_LISTING_CTA_LABEL = 'Create a listing';
+export const GUEST_REQUEST_RENTAL_CTA_LABEL = 'Request rental';
 
 /** Registration / sign-in prompt copy for restricted guest actions. */
 export const GUEST_REGISTRATION_PROMPT_HEADING = 'Registration required';
@@ -448,5 +447,61 @@ export function catalogueAudienceCapabilities(audience: CatalogueAudience): {
     can_request_rental: false,
     sees_owner_contact: false,
     uses_existing_registered_browse: false,
+  };
+}
+
+export type GuestCatalogueUiStatus =
+  | 'loading'
+  | 'error'
+  | 'empty'
+  | 'ready';
+
+export function guestCatalogueUiStatus(options: {
+  loading?: boolean;
+  error?: string;
+  previewCount?: number;
+}): GuestCatalogueUiStatus {
+  if (options.loading) return 'loading';
+  if (options.error) return 'error';
+  if ((options.previewCount ?? 0) <= 0) return 'empty';
+  return 'ready';
+}
+
+/**
+ * Restricted-action attempt for guests — opens the registration prompt only.
+ * Never marks the action as succeeded and never implies an API call.
+ */
+export function attemptGuestRestrictedActionUi(
+  action: GuestRestrictedAction
+): {
+  prompt: ReturnType<typeof guestRegistrationPromptForAction>;
+  success: false;
+  apiCalled: false;
+} {
+  return {
+    prompt: guestRegistrationPromptForAction(action),
+    success: false,
+    apiCalled: false,
+  };
+}
+
+/** Safe display props for a guest preview card (approved fields only). */
+export function guestListingCardView(preview: GuestListingPreview): {
+  id: number;
+  title: string;
+  category: string;
+  availability: 'available' | 'unavailable';
+  thumbnail_url: string | null;
+  detail_path: string;
+  has_thumbnail: boolean;
+} {
+  return {
+    id: preview.id,
+    title: preview.title,
+    category: String(preview.category),
+    availability: preview.availability,
+    thumbnail_url: preview.thumbnail_url,
+    detail_path: guestListingDetailPath(preview.id),
+    has_thumbnail: Boolean(preview.thumbnail_url && preview.thumbnail_url.trim()),
   };
 }

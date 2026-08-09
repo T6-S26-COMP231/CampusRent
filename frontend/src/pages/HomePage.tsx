@@ -24,7 +24,7 @@ export default function HomePage() {
     ? { to: '/listings/new', label: 'Create a Listing' }
     : user
       ? null
-      : { to: '/login', label: 'Sign In' };
+      : { to: '/browse', label: 'Browse listings' };
 
   return (
     <div>
