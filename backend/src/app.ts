@@ -8,6 +8,7 @@ import listingRoutes from './routes/listings';
 import requestRoutes from './routes/requests';
 import conversationRoutes from './routes/conversations';
 import reportSubmissionRoutes from './routes/reportSubmission';
+import reviewSubmissionRoutes from './routes/reviewSubmission';
 import adminRoutes from './routes/admin';
 import { getDatabaseStatus } from './db/connection';
 
@@ -51,6 +52,7 @@ export function createApp() {
   app.use('/api/requests', requestRoutes);
   app.use('/api/conversations', conversationRoutes);
   app.use('/api/reports', reportSubmissionRoutes);
+  app.use('/api/reviews', reviewSubmissionRoutes);
   app.use('/api/admin', adminRoutes);
 
   app.use((_req, res) => {
