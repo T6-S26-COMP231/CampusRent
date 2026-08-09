@@ -414,6 +414,13 @@ export const MODERATION_TARGET_MISSING_LISTING = 'This listing is no longer avai
 export const MODERATION_TARGET_MISSING_USER = 'This user account is no longer available.';
 export const MODERATION_ACTION_NOT_CONNECTED_MESSAGE =
   'Moderation actions are not connected yet.';
+export const MODERATION_ACTION_PROCESSING_LABEL = 'Processing moderation action…';
+export const MODERATION_WARN_SUCCESS_MESSAGE = 'Warning moderation action recorded.';
+export const MODERATION_REMOVE_SUCCESS_MESSAGE = 'Listing removed successfully.';
+export const MODERATION_SUSPEND_SUCCESS_MESSAGE = 'User account suspended.';
+export const MODERATION_RESOLVE_SUCCESS_MESSAGE = 'Report resolved.';
+export const MODERATION_DISMISS_SUCCESS_MESSAGE = 'Report dismissed.';
+export const MODERATION_ACTION_ERROR_FALLBACK = 'Unable to complete moderation action.';
 export const MODERATION_CANCEL_CONFIRM_LABEL = 'Cancel';
 export const MODERATION_CONFIRM_ACTION_LABEL = 'Confirm';
 
@@ -602,4 +609,264 @@ export function moderationActionsDisabledReason(
   const normalized = normalizeModerationStatus(status);
   if (normalized === 'open') return '';
   return `This report is ${moderationStatusLabel(normalized).toLowerCase()}.`;
+}
+
+/* -------------------------------------------------------------------------- */
+/* US-23.6 — admin API integration helpers                                    */
+/* -------------------------------------------------------------------------- */
+
+/** POST body for moderation actions — action only. */
+export function buildModerationActionRequestBody(
+  action: ModerationAction
+): { action: ModerationAction } {
+  return { action };
+}
+
+export function moderationActionRequestHasTrustedFieldsOnly(body: {
+  action: ModerationAction;
+}): boolean {
+  const keys = Object.keys(body);
+  return keys.length === 1 && keys[0] === 'action' && isModerationAction(body.action);
+}
+
+/**
+ * Truthful success copy after a real backend success.
+ * Warn never claims notification/email delivery.
+ */
+export function moderationActionSuccessMessage(action: ModerationAction): string {
+  switch (action) {
+    case 'warn':
+      return MODERATION_WARN_SUCCESS_MESSAGE;
+    case 'remove_listing':
+      return MODERATION_REMOVE_SUCCESS_MESSAGE;
+    case 'suspend_user':
+      return MODERATION_SUSPEND_SUCCESS_MESSAGE;
+    case 'resolve':
+      return MODERATION_RESOLVE_SUCCESS_MESSAGE;
+    case 'dismiss':
+      return MODERATION_DISMISS_SUCCESS_MESSAGE;
+    default: {
+      const _exhaustive: never = action;
+      return String(_exhaustive);
+    }
+  }
+}
+
+export function moderationActionErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : MODERATION_ACTION_ERROR_FALLBACK;
+}
+
+/** Map admin API list/detail payloads into the UI view-model. */
+export function mapAdminReportApiToView(payload: {
+  report: ModerationReportDetail & { reporter?: unknown };
+  target: ModerationTargetView;
+}): ModerationReportView {
+  const { report, target } = payload;
+  return {
+    report: {
+      report_id: report.report_id,
+      reporter_id: report.reporter_id,
+      reporter_label: report.reporter_label,
+      reason: report.reason,
+      details: report.details,
+      created_at: report.created_at,
+      status: normalizeModerationStatus(report.status),
+      target_type: report.target_type,
+      target_id: report.target_id,
+    },
+    target,
+  };
+}
+
+export function mapAdminReportsApiToViews(
+  payloads: Array<{ report: ModerationReportDetail & { reporter?: unknown }; target: ModerationTargetView }>
+): ModerationReportView[] {
+  return payloads.map(mapAdminReportApiToView);
+}
+
+/**
+ * After a successful action, merge the server-returned report/target into the
+ * local views list (replace matching report_id, keep selection stable).
+ */
+export function applyModerationActionSuccessToViews(
+  views: ModerationReportView[],
+  updated: ModerationReportView
+): ModerationReportView[] {
+  const mapped = mapAdminReportApiToView(updated);
+  const without = views.filter((view) => view.report.report_id !== mapped.report.report_id);
+  return sortModerationViewsByQueueOrder([mapped, ...without]);
+}
+
+function sortModerationViewsByQueueOrder(views: ModerationReportView[]): ModerationReportView[] {
+  const rows = moderationQueueRowsFromViews(views);
+  return rows
+    .map((row) => views.find((view) => view.report.report_id === row.report_id))
+    .filter((view): view is ModerationReportView => Boolean(view));
+}
+
+export function preserveSelectedReportId(
+  selectedReportId: number | null,
+  views: ModerationReportView[]
+): number | null {
+  if (selectedReportId == null) return null;
+  return views.some((view) => view.report.report_id === selectedReportId)
+    ? selectedReportId
+    : null;
+}
+
+export function canSubmitModerationAction(options: {
+  acting: boolean;
+  status: ModerationStatus | undefined | null;
+}): boolean {
+  if (options.acting) return false;
+  return normalizeModerationStatus(options.status) === 'open';
+}
+
+/** US-23.6 — POST /admin/reports/:id/actions call descriptor ({ action } only). */
+export function buildPerformModerationActionCall(
+  reportId: number,
+  action: ModerationAction
+): { path: string; method: 'POST'; body: { action: ModerationAction } } {
+  return {
+    path: `/admin/reports/${reportId}/actions`,
+    method: 'POST',
+    body: buildModerationActionRequestBody(action),
+  };
+}
+
+export function moderationActionBodyExcludesClientIdentity(body: Record<string, unknown>): boolean {
+  return (
+    !('administrator_id' in body) &&
+    !('target_id' in body) &&
+    !('target_type' in body) &&
+    moderationActionRequestHasTrustedFieldsOnly(body as { action: ModerationAction })
+  );
+}
+
+export interface ModerationQueueLoadFlowResult {
+  status: ModerationQueueUiStatus;
+  views: ModerationReportView[];
+  rows: ModerationQueueRow[];
+  error: string;
+  selectedReportId: number | null;
+}
+
+/** Pure queue-load flow for AdminPage + tests. */
+export async function runModerationQueueLoadFlow(
+  fetchReports: () => Promise<
+    Array<{ report: ModerationReportDetail & { reporter?: unknown }; target: ModerationTargetView }>
+  >,
+  selectedReportId: number | null = null
+): Promise<ModerationQueueLoadFlowResult> {
+  try {
+    const payloads = await fetchReports();
+    const views = mapAdminReportsApiToViews(payloads);
+    const loaded = applyModerationQueueLoaded(views);
+    return {
+      status: loaded.status,
+      views,
+      rows: loaded.rows,
+      error: '',
+      selectedReportId: preserveSelectedReportId(selectedReportId, views),
+    };
+  } catch (error) {
+    const failed = applyModerationQueueFailure(error);
+    return {
+      status: failed.status,
+      views: [],
+      rows: failed.rows,
+      error: failed.error,
+      selectedReportId: null,
+    };
+  }
+}
+
+export interface ModerationActionFlowResult {
+  kind: 'confirm' | 'blocked' | 'success' | 'failure';
+  pendingAction: ModerationAction | null;
+  success: string;
+  error: string;
+  acting: boolean;
+  retryable: boolean;
+  view: ModerationReportView | null;
+  selectedReportId: number | null;
+}
+
+/**
+ * Pure moderation-action flow for AdminPage + tests.
+ * Destructive actions require confirmed=true before the API is called.
+ * Success uses truthful UI copy (warn never claims notification delivery).
+ */
+export async function runModerationActionFlow(options: {
+  reportId: number;
+  action: ModerationAction;
+  status: ModerationStatus | undefined | null;
+  acting: boolean;
+  confirmed?: boolean;
+  perform: (
+    reportId: number,
+    action: ModerationAction
+  ) => Promise<{ report: ModerationReportDetail & { reporter?: unknown }; target: ModerationTargetView }>;
+}): Promise<ModerationActionFlowResult> {
+  const { reportId, action, status, acting, confirmed = false, perform } = options;
+
+  if (moderationActionRequiresConfirm(action) && !confirmed) {
+    return {
+      kind: 'confirm',
+      pendingAction: action,
+      success: '',
+      error: '',
+      acting: false,
+      retryable: true,
+      view: null,
+      selectedReportId: reportId,
+    };
+  }
+
+  if (!canSubmitModerationAction({ acting, status })) {
+    return {
+      kind: 'blocked',
+      pendingAction: null,
+      success: '',
+      error: acting ? MODERATION_ACTION_PROCESSING_LABEL : moderationActionsDisabledReason(status),
+      acting,
+      retryable: !acting,
+      view: null,
+      selectedReportId: reportId,
+    };
+  }
+
+  try {
+    const result = await perform(reportId, action);
+    const view = mapAdminReportApiToView(result);
+    return {
+      kind: 'success',
+      pendingAction: null,
+      success: moderationActionSuccessMessage(action),
+      error: '',
+      acting: false,
+      retryable: false,
+      view,
+      selectedReportId: reportId,
+    };
+  } catch (error) {
+    return {
+      kind: 'failure',
+      pendingAction: null,
+      success: '',
+      error: moderationActionErrorMessage(error),
+      acting: false,
+      retryable: true,
+      view: null,
+      selectedReportId: reportId,
+    };
+  }
+}
+
+/** Warn success copy must never claim email/notification delivery. */
+export function moderationWarnSuccessIsTruthful(message: string): boolean {
+  return (
+    message === MODERATION_WARN_SUCCESS_MESSAGE &&
+    !/email sent|notification delivered|user notified/i.test(message)
+  );
 }

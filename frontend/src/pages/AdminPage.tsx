@@ -1,21 +1,26 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { CheckCircle2, ShieldCheck, UserCheck, UserX } from 'lucide-react';
 import ModerationQueue from '../components/ModerationQueue';
 import ModerationReportDetail from '../components/ModerationReportDetail';
 import { api, User } from '../api/client';
 import {
+  MODERATION_ACTION_PROCESSING_LABEL,
   MODERATION_SECTION_LABEL,
+  applyModerationActionSuccessToViews,
   findModerationReportView,
+  mapAdminReportApiToView,
+  mapAdminReportsApiToViews,
+  moderationActionErrorMessage,
+  moderationActionSuccessMessage,
   moderationQueueRowsFromViews,
+  preserveSelectedReportId,
+  type ModerationAction,
   type ModerationReportView,
 } from '../utils/moderationQueue';
 
 /**
  * System Administration Team dashboard.
- * US-22 verification + US-23.2 moderation queue / report-detail UI.
- *
- * Report list/detail data is owned by US-23.3 (#154). Until that endpoint
- * exists this page does not fabricate reports — the queue stays empty.
+ * US-22 verification + US-23.6 moderation queue / detail / action integration.
  */
 export default function AdminPage() {
   const [pendingUsers, setPendingUsers] = useState<User[]>([]);
@@ -23,11 +28,13 @@ export default function AdminPage() {
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
 
-  // US-23.2 / #154 seam: real GET /admin/reports will populate these later.
-  const [moderationViews] = useState<ModerationReportView[]>([]);
-  const [moderationLoading] = useState(false);
-  const [moderationError] = useState('');
+  const [moderationViews, setModerationViews] = useState<ModerationReportView[]>([]);
+  const [moderationLoading, setModerationLoading] = useState(true);
+  const [moderationError, setModerationError] = useState('');
   const [selectedReportId, setSelectedReportId] = useState<number | null>(null);
+  const [moderationActing, setModerationActing] = useState(false);
+  const [moderationActionMessage, setModerationActionMessage] = useState('');
+  const [moderationActionError, setModerationActionError] = useState('');
 
   const moderationRows = useMemo(
     () => moderationQueueRowsFromViews(moderationViews),
@@ -49,7 +56,31 @@ export default function AdminPage() {
       .finally(() => setLoading(false));
   };
 
+  const loadReports = useCallback(async (preserveSelection = true) => {
+    setModerationLoading(true);
+    setModerationError('');
+    try {
+      const payloads = await api.getAdminReports();
+      const views = mapAdminReportsApiToViews(payloads);
+      setModerationViews(views);
+      setSelectedReportId((current) =>
+        preserveSelection ? preserveSelectedReportId(current, views) : null
+      );
+    } catch (err) {
+      setModerationViews([]);
+      setSelectedReportId(null);
+      setModerationError(
+        err instanceof Error ? err.message : 'Unable to load reports.'
+      );
+    } finally {
+      setModerationLoading(false);
+    }
+  }, []);
+
   useEffect(loadUsers, []);
+  useEffect(() => {
+    void loadReports();
+  }, [loadReports]);
 
   const verifyUser = async (userId: number, action: 'approve' | 'reject') => {
     setError('');
@@ -64,6 +95,55 @@ export default function AdminPage() {
       loadUsers();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unable to update verification status');
+    }
+  };
+
+  const handleSelectReport = async (reportId: number) => {
+    setSelectedReportId(reportId);
+    setModerationActionMessage('');
+    setModerationActionError('');
+    try {
+      const detail = await api.getAdminReport(reportId);
+      const mapped = mapAdminReportApiToView(detail);
+      setModerationViews((current) => applyModerationActionSuccessToViews(current, mapped));
+      setSelectedReportId(mapped.report.report_id);
+    } catch (err) {
+      // Keep list selection + list payload; surface detail refresh failure.
+      setModerationActionError(moderationActionErrorMessage(err));
+    }
+  };
+
+  const handleModerationAction = async (action: ModerationAction) => {
+    if (selectedReportId == null || moderationActing) return;
+
+    setModerationActing(true);
+    setModerationActionError('');
+    setModerationActionMessage(MODERATION_ACTION_PROCESSING_LABEL);
+
+    try {
+      const result = await api.performModerationAction(selectedReportId, action);
+      const updated = mapAdminReportApiToView({
+        report: result.report,
+        target: result.target,
+      });
+      setModerationViews((current) => applyModerationActionSuccessToViews(current, updated));
+      setSelectedReportId(updated.report.report_id);
+      setModerationActionMessage(moderationActionSuccessMessage(action));
+
+      // Refresh queue from server so status/target reflect persisted state.
+      try {
+        const payloads = await api.getAdminReports();
+        const views = mapAdminReportsApiToViews(payloads);
+        setModerationViews(views);
+        setSelectedReportId(preserveSelectedReportId(updated.report.report_id, views));
+      } catch {
+        // Keep the action-response view if queue refresh fails.
+      }
+    } catch (err) {
+      setModerationActionMessage('');
+      setModerationActionError(moderationActionErrorMessage(err));
+    } finally {
+      setModerationActing(false);
     }
   };
 
@@ -156,7 +236,6 @@ export default function AdminPage() {
         </p>
         <p className="mt-2 max-w-2xl text-sm text-slate-500">
           Reports submitted through CampusRent appear here for System Administration Team review.
-          List and detail data will load from the admin reports API when it is available.
         </p>
 
         <div className="mt-6">
@@ -165,11 +244,19 @@ export default function AdminPage() {
             loading={moderationLoading}
             error={moderationError}
             selectedReportId={selectedReportId}
-            onSelect={setSelectedReportId}
+            onSelect={(reportId) => {
+              void handleSelectReport(reportId);
+            }}
           />
         </div>
 
-        <ModerationReportDetail view={selectedView} />
+        <ModerationReportDetail
+          view={selectedView}
+          onAction={handleModerationAction}
+          acting={moderationActing}
+          actionMessage={moderationActionMessage}
+          actionError={moderationActionError}
+        />
       </div>
     </div>
   );

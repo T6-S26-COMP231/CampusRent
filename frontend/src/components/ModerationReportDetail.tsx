@@ -1,6 +1,7 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   MODERATION_ACTIONS_HEADING,
+  MODERATION_ACTION_PROCESSING_LABEL,
   MODERATION_CANCEL_CONFIRM_LABEL,
   MODERATION_CONFIRM_ACTION_LABEL,
   MODERATION_DETAIL_EMPTY_SELECTION,
@@ -22,11 +23,11 @@ import {
 
 interface Props {
   view: ModerationReportView | null;
-  /**
-   * Optional later seam for US-23.6. When omitted, actions stay UI-only and
-   * never claim a successful moderation result.
-   */
+  /** Real US-23.6 handler — only called after confirmation for destructive actions. */
   onAction?: (action: ModerationAction) => void | Promise<void>;
+  acting?: boolean;
+  actionMessage?: string;
+  actionError?: string;
 }
 
 function actionClassName(action: ModerationAction): string {
@@ -37,11 +38,22 @@ function actionClassName(action: ModerationAction): string {
 }
 
 /**
- * US-23.2 — report detail, target panel, and UI-only moderation actions.
+ * US-23.2 / US-23.6 — report detail, target panel, and moderation actions.
  */
-export default function ModerationReportDetail({ view, onAction }: Props) {
+export default function ModerationReportDetail({
+  view,
+  onAction,
+  acting = false,
+  actionMessage = '',
+  actionError = '',
+}: Props) {
   const [pendingAction, setPendingAction] = useState<ModerationAction | null>(null);
   const [notice, setNotice] = useState('');
+
+  useEffect(() => {
+    setPendingAction(null);
+    setNotice('');
+  }, [view?.report.report_id]);
 
   if (!view) {
     return (
@@ -55,8 +67,10 @@ export default function ModerationReportDetail({ view, onAction }: Props) {
   const { report, target } = view;
   const actions = visibleModerationActions(report.target_type, report.status);
   const disabledReason = moderationActionsDisabledReason(report.status);
+  const controlsDisabled = acting;
 
   const handleActionClick = (action: ModerationAction) => {
+    if (controlsDisabled) return;
     setNotice('');
     const next = attemptModerationActionUi(action, { onAction });
     setPendingAction(next.pendingAction);
@@ -64,7 +78,7 @@ export default function ModerationReportDetail({ view, onAction }: Props) {
   };
 
   const handleConfirm = () => {
-    if (!pendingAction) return;
+    if (!pendingAction || controlsDisabled) return;
     const next = attemptModerationActionUi(pendingAction, {
       confirmed: true,
       onAction,
@@ -74,6 +88,7 @@ export default function ModerationReportDetail({ view, onAction }: Props) {
   };
 
   const handleCancelConfirm = () => {
+    if (controlsDisabled) return;
     const next = cancelModerationActionConfirm();
     setPendingAction(next.pendingAction);
     setNotice(next.notice);
@@ -206,6 +221,7 @@ export default function ModerationReportDetail({ view, onAction }: Props) {
                   key={action}
                   type="button"
                   className={actionClassName(action)}
+                  disabled={controlsDisabled}
                   onClick={() => handleActionClick(action)}
                 >
                   {moderationActionLabel(action)}
@@ -217,19 +233,62 @@ export default function ModerationReportDetail({ view, onAction }: Props) {
               <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-4">
                 <p className="text-sm text-amber-900">{moderationConfirmMessage(pendingAction)}</p>
                 <div className="mt-3 flex flex-wrap gap-2">
-                  <button type="button" className="btn-danger" onClick={handleConfirm}>
+                  <button
+                    type="button"
+                    className="btn-danger"
+                    disabled={controlsDisabled}
+                    onClick={handleConfirm}
+                  >
                     {MODERATION_CONFIRM_ACTION_LABEL}
                   </button>
-                  <button type="button" className="btn-secondary" onClick={handleCancelConfirm}>
+                  <button
+                    type="button"
+                    className="btn-secondary"
+                    disabled={controlsDisabled}
+                    onClick={handleCancelConfirm}
+                  >
                     {MODERATION_CANCEL_CONFIRM_LABEL}
                   </button>
                 </div>
               </div>
             )}
 
+            {acting && (
+              <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700">
+                {actionMessage || MODERATION_ACTION_PROCESSING_LABEL}
+              </div>
+            )}
+
+            {!acting && actionMessage && (
+              <div className="mt-4 flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-700">
+                {actionMessage}
+              </div>
+            )}
+
+            {!acting && actionError && (
+              <div className="mt-4 rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+                {actionError}
+              </div>
+            )}
+
             {notice && (
               <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700">
                 {notice}
+              </div>
+            )}
+          </>
+        )}
+
+        {disabledReason && (actionMessage || actionError) && (
+          <>
+            {actionMessage && (
+              <div className="mt-4 flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-700">
+                {actionMessage}
+              </div>
+            )}
+            {actionError && (
+              <div className="mt-4 rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+                {actionError}
               </div>
             )}
           </>
