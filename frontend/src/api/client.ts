@@ -214,6 +214,22 @@ export const api = {
   /** US-19.6 — list reviews for a listing (ListingDetailPage). */
   getListingReviews: (listingId: number): Promise<ListingReviewItem[]> =>
     request<ListingReviewItem[]>(`/listings/${listingId}/reviews`),
+
+  /**
+   * US-21.5 — load the authenticated verified student's profile.
+   * GET /api/profile — no user id in the path.
+   */
+  getProfile: (): Promise<User> => request<User>('/profile'),
+
+  /**
+   * US-21.5 — update personal profile fields only.
+   * Body is { first_name, last_name, phone } — never protected identity fields.
+   */
+  updateProfile: (body: UpdateProfileBody): Promise<User> =>
+    request<User>('/profile', {
+      method: 'PATCH',
+      body: JSON.stringify(body),
+    }),
 };
 
 export interface User {
@@ -226,6 +242,13 @@ export interface User {
   status: 'active' | 'suspended';
   phone?: string;
   created_at?: string;
+}
+
+/** PATCH /api/profile — editable personal fields only. */
+export interface UpdateProfileBody {
+  first_name: string;
+  last_name: string;
+  phone: string;
 }
 
 export interface Listing {
