@@ -120,7 +120,7 @@ describe('US-16.7 conversation creation, authorization, and duplicates', () => {
   test('verified renter starts with listing owner and persists normalized participants', async () => {
     const response = await api(baseUrl, 'POST', '/api/conversations', {
       token: tokenFor(renterId, 'renter@mycentennialcollege.ca'),
-      body: { listing_id: listingId, recipient_id: ownerId },
+      body: { listing_id: listingId, recipient_id: ownerId , body: 'Hello — is this still available?'},
     });
 
     assert.equal(response.status, 201);
@@ -140,7 +140,7 @@ describe('US-16.7 conversation creation, authorization, and duplicates', () => {
 
     const response = await api(baseUrl, 'POST', '/api/conversations', {
       token: tokenFor(ownerId, 'owner@mycentennialcollege.ca'),
-      body: { listing_id: listingId, recipient_id: renterId },
+      body: { listing_id: listingId, recipient_id: renterId , body: 'Hello — is this still available?'},
     });
 
     assert.equal(response.status, 201);
@@ -162,7 +162,7 @@ describe('US-16.7 conversation creation, authorization, and duplicates', () => {
 
     const response = await api(baseUrl, 'POST', '/api/conversations', {
       token: tokenFor(ownerId, 'owner@mycentennialcollege.ca'),
-      body: { listing_id: listingId, recipient_id: strangerId },
+      body: { listing_id: listingId, recipient_id: strangerId , body: 'Hello — is this still available?'},
     });
 
     assert.equal(response.status, 403);
@@ -180,7 +180,7 @@ describe('US-16.7 conversation creation, authorization, and duplicates', () => {
 
     const response = await api(baseUrl, 'POST', '/api/conversations', {
       token: tokenFor(renterId, 'renter@mycentennialcollege.ca'),
-      body: { listing_id: listingId, recipient_id: otherRenterId },
+      body: { listing_id: listingId, recipient_id: otherRenterId , body: 'Hello — is this still available?'},
     });
 
     assert.equal(response.status, 403);
@@ -190,7 +190,7 @@ describe('US-16.7 conversation creation, authorization, and duplicates', () => {
   test('self-conversation is rejected', async () => {
     const response = await api(baseUrl, 'POST', '/api/conversations', {
       token: tokenFor(renterId, 'renter@mycentennialcollege.ca'),
-      body: { listing_id: listingId, recipient_id: renterId },
+      body: { listing_id: listingId, recipient_id: renterId , body: 'Hello — is this still available?'},
     });
 
     assert.equal(response.status, 400);
@@ -207,7 +207,7 @@ describe('US-16.7 conversation creation, authorization, and duplicates', () => {
 
     const response = await api(baseUrl, 'POST', '/api/conversations', {
       token: tokenFor(pendingId, 'pending@mycentennialcollege.ca'),
-      body: { listing_id: listingId, recipient_id: ownerId },
+      body: { listing_id: listingId, recipient_id: ownerId , body: 'Hello — is this still available?'},
     });
 
     assert.equal(response.status, 403);
@@ -219,7 +219,7 @@ describe('US-16.7 conversation creation, authorization, and duplicates', () => {
 
     const response = await api(baseUrl, 'POST', '/api/conversations', {
       token: tokenFor(renterId, 'renter@mycentennialcollege.ca'),
-      body: { listing_id: listingId, recipient_id: ownerId },
+      body: { listing_id: listingId, recipient_id: ownerId , body: 'Hello — is this still available?'},
     });
 
     assert.equal(response.status, 403);
@@ -232,7 +232,7 @@ describe('US-16.7 conversation creation, authorization, and duplicates', () => {
 
     const response = await api(baseUrl, 'POST', '/api/conversations', {
       token: tokenFor(renterId, 'renter@mycentennialcollege.ca'),
-      body: { listing_id: listingId, recipient_id: ownerId },
+      body: { listing_id: listingId, recipient_id: ownerId , body: 'Hello — is this still available?'},
     });
 
     assert.equal(response.status, 403);
@@ -250,7 +250,7 @@ describe('US-16.7 conversation creation, authorization, and duplicates', () => {
 
     const response = await api(baseUrl, 'POST', '/api/conversations', {
       token: tokenFor(thirdPartyId, 'third@mycentennialcollege.ca'),
-      body: { listing_id: listingId, recipient_id: renterId },
+      body: { listing_id: listingId, recipient_id: renterId , body: 'Hello — is this still available?'},
     });
 
     assert.equal(response.status, 403);
@@ -259,7 +259,7 @@ describe('US-16.7 conversation creation, authorization, and duplicates', () => {
 
   test('first creation returns 201 and duplicate returns 200 with the same id', async () => {
     const token = tokenFor(renterId, 'renter@mycentennialcollege.ca');
-    const body = { listing_id: listingId, recipient_id: ownerId };
+    const body = { listing_id: listingId, recipient_id: ownerId , body: 'Hello — is this still available?'};
 
     const first = await api(baseUrl, 'POST', '/api/conversations', { token, body });
     assert.equal(first.status, 201);
@@ -275,13 +275,13 @@ describe('US-16.7 conversation creation, authorization, and duplicates', () => {
 
     const created = await api(baseUrl, 'POST', '/api/conversations', {
       token: tokenFor(renterId, 'renter@mycentennialcollege.ca'),
-      body: { listing_id: listingId, recipient_id: ownerId },
+      body: { listing_id: listingId, recipient_id: ownerId , body: 'Hello — is this still available?'},
     });
     assert.equal(created.status, 201);
 
     const reversed = await api(baseUrl, 'POST', '/api/conversations', {
       token: tokenFor(ownerId, 'owner@mycentennialcollege.ca'),
-      body: { listing_id: listingId, recipient_id: renterId },
+      body: { listing_id: listingId, recipient_id: renterId , body: 'Hello — is this still available?'},
     });
 
     assert.equal(reversed.status, 200);
@@ -295,11 +295,11 @@ describe('US-16.7 conversation creation, authorization, and duplicates', () => {
 
     const first = await api(baseUrl, 'POST', '/api/conversations', {
       token,
-      body: { listing_id: listingId, recipient_id: ownerId },
+      body: { listing_id: listingId, recipient_id: ownerId , body: 'Hello — is this still available?'},
     });
     const second = await api(baseUrl, 'POST', '/api/conversations', {
       token,
-      body: { listing_id: secondListingId, recipient_id: ownerId },
+      body: { listing_id: secondListingId, recipient_id: ownerId , body: 'Hello — is this still available?'},
     });
 
     assert.equal(first.status, 201);
@@ -327,7 +327,7 @@ describe('US-16.7 conversation creation, authorization, and duplicates', () => {
     try {
       const response = await api(baseUrl, 'POST', '/api/conversations', {
         token: tokenFor(renterId, 'renter@mycentennialcollege.ca'),
-        body: { listing_id: listingId, recipient_id: ownerId },
+        body: { listing_id: listingId, recipient_id: ownerId , body: 'Hello — is this still available?'},
       });
 
       assert.equal(response.status, 200);
@@ -341,7 +341,7 @@ describe('US-16.7 conversation creation, authorization, and duplicates', () => {
 
   test('concurrent duplicate attempts leave only one MongoDB record', async () => {
     const token = tokenFor(renterId, 'renter@mycentennialcollege.ca');
-    const body = { listing_id: listingId, recipient_id: ownerId };
+    const body = { listing_id: listingId, recipient_id: ownerId , body: 'Hello — is this still available?'};
 
     const results = await Promise.all([
       api(baseUrl, 'POST', '/api/conversations', { token, body }),
@@ -368,6 +368,7 @@ describe('US-16.7 conversation creation, authorization, and duplicates', () => {
       body: {
         listing_id: listingId,
         recipient_id: ownerId,
+        body: 'Hello — is this still available?',
         initiator_id: outsiderId,
         participant_low_id: outsiderId,
       },
@@ -381,7 +382,7 @@ describe('US-16.7 conversation creation, authorization, and duplicates', () => {
 
   test('unauthenticated request is denied', async () => {
     const response = await api(baseUrl, 'POST', '/api/conversations', {
-      body: { listing_id: listingId, recipient_id: ownerId },
+      body: { listing_id: listingId, recipient_id: ownerId , body: 'Hello — is this still available?'},
     });
     assert.equal(response.status, 401);
   });
@@ -393,7 +394,7 @@ describe('US-16.7 conversation creation, authorization, and duplicates', () => {
       (
         await api(baseUrl, 'POST', '/api/conversations', {
           token,
-          body: { recipient_id: ownerId },
+          body: { recipient_id: ownerId, body: 'Hello — is this still available?' },
         })
       ).status,
       400
@@ -402,7 +403,7 @@ describe('US-16.7 conversation creation, authorization, and duplicates', () => {
       (
         await api(baseUrl, 'POST', '/api/conversations', {
           token,
-          body: { listing_id: listingId, recipient_id: 999999 },
+          body: { listing_id: listingId, recipient_id: 999999 , body: 'Hello — is this still available?'},
         })
       ).status,
       404
@@ -411,7 +412,7 @@ describe('US-16.7 conversation creation, authorization, and duplicates', () => {
       (
         await api(baseUrl, 'POST', '/api/conversations', {
           token,
-          body: { listing_id: 999999, recipient_id: ownerId },
+          body: { listing_id: 999999, recipient_id: ownerId , body: 'Hello — is this still available?'},
         })
       ).status,
       404

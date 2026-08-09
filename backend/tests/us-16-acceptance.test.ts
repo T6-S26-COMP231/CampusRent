@@ -1,13 +1,12 @@
 /**
- * US-16.7 — TAC acceptance mapping for Start conversations.
+ * US-16 — TAC acceptance + compliance for Start conversations.
  *
- * TAC Test 1 — Start conversation with another user → created
- * TAC Test 2 — View conversation list → newly created appears
+ * TAC Test 1 — Start conversation with another user → created (with first message)
+ * TAC Test 2 — View conversation list → newly created appears (with preview)
  * TAC Test 3 — Start with a registered user → created successfully
  * TAC Test 4 — Unauthorized creation → access denied
  *
- * Empty-conversation assumption (not fully resolved): US-16 persists the
- * listing/participant shell; latest_message_preview stays null until US-17.
+ * TAC notes: empty conversations are not allowed; list shows latest message preview.
  */
 import assert from 'node:assert/strict';
 import { after, before, beforeEach, describe, test } from 'node:test';
@@ -29,12 +28,16 @@ let User: typeof import('../src/models/User').User;
 let Listing: typeof import('../src/models/Listing').Listing;
 let RentalRequest: typeof import('../src/models/RentalRequest').RentalRequest;
 let Conversation: typeof import('../src/models/Conversation').Conversation;
+let Message: typeof import('../src/models/Message').Message;
+let conversationIdentity: typeof import('../src/models/Conversation').conversationIdentity;
 
 let server: Server;
 let baseUrl: string;
 let ownerId: number;
 let renterId: number;
 let listingId: number;
+
+const INITIAL = 'Hello — is this item still available?';
 
 async function createStudent(
   email: string,
@@ -88,7 +91,8 @@ before(async () => {
   ({ User } = await import('../src/models/User'));
   ({ Listing } = await import('../src/models/Listing'));
   ({ RentalRequest } = await import('../src/models/RentalRequest'));
-  ({ Conversation } = await import('../src/models/Conversation'));
+  ({ Conversation, conversationIdentity } = await import('../src/models/Conversation'));
+  ({ Message } = await import('../src/models/Message'));
   await connectDatabase(uri);
   await Conversation.syncIndexes();
 
@@ -110,10 +114,10 @@ after(async () => {
 });
 
 describe('US-16 TAC acceptance tests', () => {
-  test('TAC Test 1 — Start conversation with another user creates a conversation', async () => {
+  test('TAC Test 1 — Start conversation with valid initial message creates conversation and first Message', async () => {
     const response = await api(baseUrl, 'POST', '/api/conversations', {
       token: tokenFor(renterId, 'renter@mycentennialcollege.ca'),
-      body: { listing_id: listingId, recipient_id: ownerId },
+      body: { listing_id: listingId, recipient_id: ownerId, body: INITIAL },
     });
 
     assert.equal(response.status, 201);
@@ -122,19 +126,34 @@ describe('US-16 TAC acceptance tests', () => {
     const stored = await Conversation.findById(response.data.id).lean();
     assert.ok(stored, 'conversation must be persisted in MongoDB');
     assert.equal(stored.listing_id, listingId);
-    assert.ok(
-      [stored.participant_low_id, stored.participant_high_id].includes(ownerId)
-    );
-    assert.ok(
-      [stored.participant_low_id, stored.participant_high_id].includes(renterId)
-    );
+
+    const messages = await Message.find({ conversation_id: response.data.id }).lean();
+    assert.equal(messages.length, 1);
+    assert.equal(messages[0].body, INITIAL);
+    assert.equal(messages[0].sender_id, renterId);
   });
 
-  test('TAC Test 2 — View conversation list shows the newly created conversation', async () => {
+  test('blank/whitespace initial message is rejected with no Conversation or Message', async () => {
+    const token = tokenFor(renterId, 'renter@mycentennialcollege.ca');
+
+    for (const body of ['', '   ', '\n\t']) {
+      const response = await api(baseUrl, 'POST', '/api/conversations', {
+        token,
+        body: { listing_id: listingId, recipient_id: ownerId, body },
+      });
+      assert.equal(response.status, 400);
+      assert.match(String(response.data?.error || ''), /blank|required/i);
+    }
+
+    assert.equal(await Conversation.countDocuments(), 0);
+    assert.equal(await Message.countDocuments(), 0);
+  });
+
+  test('TAC Test 2 — Conversation list shows conversation with latest_message_preview', async () => {
     const token = tokenFor(renterId, 'renter@mycentennialcollege.ca');
     const created = await api(baseUrl, 'POST', '/api/conversations', {
       token,
-      body: { listing_id: listingId, recipient_id: ownerId },
+      body: { listing_id: listingId, recipient_id: ownerId, body: INITIAL },
     });
     assert.equal(created.status, 201);
 
@@ -148,7 +167,7 @@ describe('US-16 TAC acceptance tests', () => {
       `${list.data[0].counterpart.first_name} ${list.data[0].counterpart.last_name}`,
       'Owner Student'
     );
-    assert.equal(list.data[0].latest_message_preview, null);
+    assert.equal(list.data[0].latest_message_preview, INITIAL);
   });
 
   test('TAC Test 3 — Start conversation with a registered verified user succeeds', async () => {
@@ -167,20 +186,16 @@ describe('US-16 TAC acceptance tests', () => {
 
     const response = await api(baseUrl, 'POST', '/api/conversations', {
       token: tokenFor(ownerId, 'owner@mycentennialcollege.ca'),
-      body: { listing_id: listingId, recipient_id: renterId },
+      body: {
+        listing_id: listingId,
+        recipient_id: renterId,
+        body: 'Thanks for your request — when can you pick up?',
+      },
     });
 
     assert.equal(response.status, 201);
     assert.equal(response.data.listing_id, listingId);
-    assert.deepEqual(
-      [...response.data.participant_ids].sort((a: number, b: number) => a - b),
-      [ownerId, renterId].sort((a, b) => a - b)
-    );
-
-    const stored = await Conversation.findById(response.data.id).lean();
-    assert.ok(stored);
-    assert.equal(stored.participant_low_id, Math.min(ownerId, renterId));
-    assert.equal(stored.participant_high_id, Math.max(ownerId, renterId));
+    assert.equal(await Message.countDocuments({ conversation_id: response.data.id }), 1);
   });
 
   test('TAC Test 4 — Unauthorized conversation creation is denied', async () => {
@@ -192,15 +207,15 @@ describe('US-16 TAC acceptance tests', () => {
 
     const cases = await Promise.all([
       api(baseUrl, 'POST', '/api/conversations', {
-        body: { listing_id: listingId, recipient_id: ownerId },
+        body: { listing_id: listingId, recipient_id: ownerId, body: INITIAL },
       }),
       api(baseUrl, 'POST', '/api/conversations', {
         token: tokenFor(strangerId, 'stranger@mycentennialcollege.ca'),
-        body: { listing_id: listingId, recipient_id: renterId },
+        body: { listing_id: listingId, recipient_id: renterId, body: INITIAL },
       }),
       api(baseUrl, 'POST', '/api/conversations', {
         token: tokenFor(ownerId, 'owner@mycentennialcollege.ca'),
-        body: { listing_id: listingId, recipient_id: strangerId },
+        body: { listing_id: listingId, recipient_id: strangerId, body: INITIAL },
       }),
     ]);
 
@@ -208,5 +223,88 @@ describe('US-16 TAC acceptance tests', () => {
     assert.equal(cases[1].status, 403);
     assert.equal(cases[2].status, 403);
     assert.equal(await Conversation.countDocuments(), 0);
+    assert.equal(await Message.countDocuments(), 0);
+  });
+
+  test('US-17 follow-up message updates latest_message_preview', async () => {
+    const renterToken = tokenFor(renterId, 'renter@mycentennialcollege.ca');
+    const ownerToken = tokenFor(ownerId, 'owner@mycentennialcollege.ca');
+
+    const created = await api(baseUrl, 'POST', '/api/conversations', {
+      token: renterToken,
+      body: { listing_id: listingId, recipient_id: ownerId, body: INITIAL },
+    });
+    assert.equal(created.status, 201);
+
+    const newer = 'Can we meet at the library tomorrow?';
+    const sent = await api(baseUrl, 'POST', `/api/conversations/${created.data.id}/messages`, {
+      token: ownerToken,
+      body: { body: newer },
+    });
+    assert.equal(sent.status, 201);
+
+    const list = await api(baseUrl, 'GET', '/api/conversations', { token: renterToken });
+    assert.equal(list.status, 200);
+    assert.equal(list.data[0].latest_message_preview, newer);
+  });
+
+  test('multiple conversations each expose their own latest preview', async () => {
+    const secondListingId = await createListing(ownerId);
+    await Listing.findByIdAndUpdate(secondListingId, { title: 'Second Tripod' });
+    const token = tokenFor(renterId, 'renter@mycentennialcollege.ca');
+
+    const first = await api(baseUrl, 'POST', '/api/conversations', {
+      token,
+      body: { listing_id: listingId, recipient_id: ownerId, body: 'First thread opener' },
+    });
+    const second = await api(baseUrl, 'POST', '/api/conversations', {
+      token,
+      body: {
+        listing_id: secondListingId,
+        recipient_id: ownerId,
+        body: 'Second thread opener',
+      },
+    });
+    assert.equal(first.status, 201);
+    assert.equal(second.status, 201);
+
+    const list = await api(baseUrl, 'GET', '/api/conversations', { token });
+    assert.equal(list.status, 200);
+    assert.equal(list.data.length, 2);
+
+    const byId = new Map(list.data.map((row: { id: number }) => [row.id, row]));
+    assert.equal(byId.get(first.data.id).latest_message_preview, 'First thread opener');
+    assert.equal(byId.get(second.data.id).latest_message_preview, 'Second thread opener');
+  });
+
+  test('legacy empty conversation does not crash the list', async () => {
+    const identity = conversationIdentity(listingId, renterId, ownerId);
+    const id = await nextId('conversations');
+    await Conversation.create({ _id: id, ...identity });
+
+    const list = await api(baseUrl, 'GET', '/api/conversations', {
+      token: tokenFor(renterId, 'renter@mycentennialcollege.ca'),
+    });
+    assert.equal(list.status, 200);
+    assert.equal(list.data.length, 1);
+    assert.equal(list.data[0].id, id);
+    assert.equal(list.data[0].latest_message_preview, null);
+  });
+
+  test('non-participant cannot access conversation detail', async () => {
+    const created = await api(baseUrl, 'POST', '/api/conversations', {
+      token: tokenFor(renterId, 'renter@mycentennialcollege.ca'),
+      body: { listing_id: listingId, recipient_id: ownerId, body: INITIAL },
+    });
+    const strangerId = await createStudent(
+      'outsider@mycentennialcollege.ca',
+      'Out',
+      'Sider'
+    );
+
+    const denied = await api(baseUrl, 'GET', `/api/conversations/${created.data.id}`, {
+      token: tokenFor(strangerId, 'outsider@mycentennialcollege.ca'),
+    });
+    assert.equal(denied.status, 403);
   });
 });

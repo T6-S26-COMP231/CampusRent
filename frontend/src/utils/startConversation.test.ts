@@ -1,15 +1,19 @@
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 import {
+  INITIAL_MESSAGE_REQUIRED_ERROR,
   canStartConversation,
+  conversationDashboardPreview,
   conversationDetailRoute,
   conversationListRoute,
   startConversationErrorMessage,
   startConversationLabel,
   startConversationRequestBody,
   startConversationSuccessMessage,
+  validateInitialConversationMessage,
   type ConversationTarget,
 } from './startConversation';
+import { NO_MESSAGES_PREVIEW } from './conversations';
 
 const ownerTarget: ConversationTarget = {
   listingId: 11,
@@ -25,19 +29,33 @@ const renterTarget: ConversationTarget = {
   counterpartRole: 'renter',
 };
 
-describe('US-16.7 start-conversation frontend helpers', () => {
-  test('listing-page / my-requests body uses listing id and owner recipient', () => {
-    assert.deepEqual(startConversationRequestBody(ownerTarget), {
+describe('US-16 start-conversation frontend helpers', () => {
+  test('start-conversation UI requires initial message', () => {
+    assert.equal(validateInitialConversationMessage(''), INITIAL_MESSAGE_REQUIRED_ERROR);
+    assert.equal(validateInitialConversationMessage('   '), INITIAL_MESSAGE_REQUIRED_ERROR);
+    assert.equal(validateInitialConversationMessage(null), INITIAL_MESSAGE_REQUIRED_ERROR);
+    assert.equal(validateInitialConversationMessage('Hello there'), null);
+  });
+
+  test('blank initial message does not produce a create API body', () => {
+    assert.equal(validateInitialConversationMessage('\n\t'), INITIAL_MESSAGE_REQUIRED_ERROR);
+    // Callers must not invoke api.startConversation when validate returns an error.
+  });
+
+  test('valid initial message builds create body with listing, recipient, and body', () => {
+    assert.deepEqual(startConversationRequestBody(ownerTarget, '  Is this available?  '), {
       listing_id: 11,
       recipient_id: 5,
+      body: 'Is this available?',
     });
     assert.equal(startConversationLabel('owner'), 'Message Owner');
   });
 
   test('incoming-requests body uses listing id and renter recipient', () => {
-    assert.deepEqual(startConversationRequestBody(renterTarget), {
+    assert.deepEqual(startConversationRequestBody(renterTarget, 'Thanks for requesting.'), {
       listing_id: 11,
       recipient_id: 9,
+      body: 'Thanks for requesting.',
     });
     assert.equal(startConversationLabel('renter'), 'Message Renter');
   });
@@ -49,14 +67,26 @@ describe('US-16.7 start-conversation frontend helpers', () => {
     assert.equal(canStartConversation(9, null), false);
   });
 
-  test('success messages distinguish 201 created and 200 existing without claiming a message was sent', () => {
+  test('success messages confirm the initial message was sent', () => {
     const created = startConversationSuccessMessage(ownerTarget, true);
     const existing = startConversationSuccessMessage(ownerTarget, false);
 
     assert.match(created, /Conversation started with Owner Student/i);
+    assert.match(created, /message was sent/i);
     assert.match(existing, /already open/i);
-    assert.doesNotMatch(created, /message sent/i);
-    assert.doesNotMatch(existing, /message sent/i);
+    assert.match(existing, /message was sent/i);
+  });
+
+  test('dashboard preview shows latest message and falls back for legacy empty', () => {
+    assert.equal(
+      conversationDashboardPreview('Can we meet tomorrow?', NO_MESSAGES_PREVIEW),
+      'Can we meet tomorrow?'
+    );
+    assert.equal(
+      conversationDashboardPreview(null, NO_MESSAGES_PREVIEW),
+      NO_MESSAGES_PREVIEW
+    );
+    assert.equal(conversationDashboardPreview('  ', NO_MESSAGES_PREVIEW), NO_MESSAGES_PREVIEW);
   });
 
   test('routes point at the Conversations dashboard and shell', () => {

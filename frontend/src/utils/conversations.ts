@@ -1,10 +1,9 @@
 /**
- * US-16.6 — conversation list / shell helpers.
+ * US-16 — conversation list / shell helpers.
  *
- * Empty-conversation assumption (TAC ambiguity, not fully resolved):
- * US-16 creates the conversation identity and participant/listing shell.
- * US-17 owns actual message content. Preview uses a truthful empty label —
- * never invent placeholder message text.
+ * List rows show participant names and latest_message_preview from the API.
+ * When a real preview exists it is displayed; null (legacy empty) falls back to
+ * NO_MESSAGES_PREVIEW without inventing message text.
  */
 
 export const NO_MESSAGES_PREVIEW = 'No messages yet';

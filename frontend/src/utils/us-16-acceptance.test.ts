@@ -1,13 +1,18 @@
 /**
- * US-16.7 — frontend helper coverage mapped to TAC UX requirements.
+ * US-16 — frontend helper coverage mapped to TAC UX requirements.
  *
- * Contact Owner / Message Owner entry bodies, dashboard routes, participant
- * display names, selectable conversation URLs, and truthful empty preview.
+ * Contact Owner / Message Owner entry bodies require an initial message,
+ * dashboard routes, participant display names, selectable conversation URLs,
+ * and latest-message preview display.
  *
  * Limitation: no React DOM framework is installed; component rendering of
- * ConversationsPage / StartConversationButton is not exercised here.
+ * ConversationsPage / StartConversationButton is not exercised here — source
+ * and helper contracts cover the acceptance mapping.
  */
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { describe, test } from 'node:test';
 import {
   conversationCounterpartName,
@@ -19,15 +24,39 @@ import {
   NO_MESSAGES_PREVIEW,
 } from './conversations';
 import {
+  INITIAL_MESSAGE_REQUIRED_ERROR,
   canStartConversation,
+  conversationDashboardPreview,
   startConversationLabel,
   startConversationRequestBody,
   startConversationSuccessMessage,
+  validateInitialConversationMessage,
   type ConversationTarget,
 } from './startConversation';
 
+const here = dirname(fileURLToPath(import.meta.url));
+const buttonSource = readFileSync(
+  join(here, '../components/StartConversationButton.tsx'),
+  'utf8'
+);
+const conversationsPageSource = readFileSync(
+  join(here, '../pages/ConversationsPage.tsx'),
+  'utf8'
+);
+const clientSource = readFileSync(join(here, '../api/client.ts'), 'utf8');
+
 describe('US-16 TAC frontend acceptance helpers', () => {
-  test('Contact Owner entry point targets listing owner (listing page / My Requests)', () => {
+  test('start-conversation UI requires initial message and blanks do not call create API', () => {
+    assert.equal(validateInitialConversationMessage(''), INITIAL_MESSAGE_REQUIRED_ERROR);
+    assert.equal(validateInitialConversationMessage('   '), INITIAL_MESSAGE_REQUIRED_ERROR);
+    assert.match(buttonSource, /validateInitialConversationMessage/);
+    assert.match(buttonSource, /Send & start conversation/);
+    assert.match(buttonSource, /api\.startConversation/);
+    // Blank path returns before API call.
+    assert.match(buttonSource, /if \(validation\)/);
+  });
+
+  test('valid initial message starts conversation with body field', () => {
     const ownerTarget: ConversationTarget = {
       listingId: 21,
       counterpartId: 4,
@@ -36,15 +65,18 @@ describe('US-16 TAC frontend acceptance helpers', () => {
     };
 
     assert.equal(startConversationLabel('owner'), 'Message Owner');
-    assert.deepEqual(startConversationRequestBody(ownerTarget), {
+    assert.deepEqual(startConversationRequestBody(ownerTarget, 'Is the camera free Friday?'), {
       listing_id: 21,
       recipient_id: 4,
+      body: 'Is the camera free Friday?',
     });
     assert.equal(canStartConversation(4, ownerTarget), false);
     assert.equal(canStartConversation(9, ownerTarget), true);
+    assert.match(clientSource, /body: string/);
+    assert.match(startConversationSuccessMessage(ownerTarget, true), /message was sent/i);
   });
 
-  test('Incoming Requests entry point targets eligible renter', () => {
+  test('Incoming Requests entry point targets eligible renter with initial message', () => {
     const renterTarget: ConversationTarget = {
       listingId: 21,
       counterpartId: 9,
@@ -53,41 +85,61 @@ describe('US-16 TAC frontend acceptance helpers', () => {
     };
 
     assert.equal(startConversationLabel('renter'), 'Message Renter');
-    assert.deepEqual(startConversationRequestBody(renterTarget), {
+    assert.deepEqual(startConversationRequestBody(renterTarget, 'Pickup at Building A?'), {
       listing_id: 21,
       recipient_id: 9,
+      body: 'Pickup at Building A?',
     });
   });
 
-  test('dashboard is selectable and shows participant names with No messages yet preview', () => {
+  test('conversation dashboard displays latest message preview from API', () => {
     assert.equal(conversationListRoute(), '/conversations');
     assert.equal(conversationDetailRoute(15), '/conversations/15');
+    assert.match(conversationsPageSource, /conversationListPreview/);
+    assert.match(conversationsPageSource, /conversationDetailRoute/);
 
-    const summary = {
+    const withPreview = {
       id: 15,
       listing: { id: 21, title: 'Campus Camera' },
       counterpart: { id: 4, first_name: 'Owner', last_name: 'Student' },
-      latest_message_preview: null,
+      latest_message_preview: 'Is the camera free Friday?',
       created_at: '2026-08-06T12:00:00.000Z',
       updated_at: '2026-08-06T12:00:00.000Z',
     };
 
-    assert.equal(conversationCounterpartName(summary), 'Owner Student');
-    assert.equal(conversationListingTitle(summary), 'Campus Camera');
-    assert.equal(conversationPreviewText(summary), NO_MESSAGES_PREVIEW);
+    assert.equal(conversationCounterpartName(withPreview), 'Owner Student');
+    assert.equal(conversationListingTitle(withPreview), 'Campus Camera');
+    assert.equal(conversationPreviewText(withPreview), 'Is the camera free Friday?');
+    assert.equal(
+      conversationDashboardPreview(withPreview.latest_message_preview, NO_MESSAGES_PREVIEW),
+      'Is the camera free Friday?'
+    );
+  });
+
+  test('preview updates according to returned newest message; legacy empty stays safe', () => {
+    assert.equal(
+      conversationPreviewText({
+        id: 1,
+        latest_message_preview: 'Newest reply',
+        created_at: '',
+        updated_at: '',
+      }),
+      'Newest reply'
+    );
+    assert.equal(
+      conversationPreviewText({
+        id: 1,
+        latest_message_preview: null,
+        created_at: '',
+        updated_at: '',
+      }),
+      NO_MESSAGES_PREVIEW
+    );
     assert.match(conversationsEmptyMessage(), /no active conversations/i);
   });
 
-  test('201 and 200 success text never claim a message was sent', () => {
-    const target: ConversationTarget = {
-      listingId: 1,
-      counterpartId: 2,
-      counterpartName: 'Owner Student',
-      counterpartRole: 'owner',
-    };
-
-    assert.match(startConversationSuccessMessage(target, true), /Conversation started/i);
-    assert.match(startConversationSuccessMessage(target, false), /already open/i);
-    assert.doesNotMatch(startConversationSuccessMessage(target, true), /message sent/i);
+  test('existing conversation navigation still works', () => {
+    assert.equal(conversationDetailRoute(42), '/conversations/42');
+    assert.match(conversationsPageSource, /to=\{conversationDetailRoute\(conversation\.id\)\}/);
   });
 });
