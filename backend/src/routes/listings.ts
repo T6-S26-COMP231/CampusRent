@@ -5,6 +5,7 @@ import fs from 'fs';
 import { authenticate, requireVerifiedStudent } from '../middleware/auth';
 import { nextId } from '../models/Counter';
 import { Listing, ListingDoc, toListingRow } from '../models/Listing';
+import { Review, toReviewListItem } from '../models/Review';
 import { User } from '../models/User';
 import { asyncHandler } from '../utils/asyncHandler';
 import { removeListingDocument } from '../utils/listingRemoval';
@@ -145,6 +146,42 @@ router.get(
   asyncHandler(async (req, res) => {
     const listings = await Listing.find({ owner_id: req.user!.id }).sort({ created_at: -1 });
     return res.json(await Promise.all(listings.map((listing) => formatListing(listing))));
+  })
+);
+
+/**
+ * US-19.4 — list reviews for a listing (ListingDetailPage).
+ * Newest first. Does not fabricate reviews or compute aggregates.
+ * Registered before /:id so "reviews" is not parsed as a listing id.
+ */
+router.get(
+  '/:id/reviews',
+  asyncHandler(async (req, res) => {
+    const listingId = Number(req.params.id);
+    if (!Number.isInteger(listingId) || listingId <= 0) {
+      return res.status(400).json({ error: 'Invalid listing id' });
+    }
+
+    const listing = await Listing.findById(listingId).select('_id').lean();
+    if (!listing) {
+      return res.status(404).json({ error: 'Listing not found' });
+    }
+
+    const reviews = await Review.find({ listing_id: listingId })
+      .sort({ created_at: -1, _id: -1 })
+      .lean();
+
+    const reviewerIds = [...new Set(reviews.map((review) => review.reviewer_id))];
+    const reviewers = await User.find({ _id: { $in: reviewerIds } })
+      .select('_id first_name last_name')
+      .lean();
+    const reviewerById = new Map(reviewers.map((user) => [user._id, user]));
+
+    return res.json(
+      reviews.map((review) =>
+        toReviewListItem(review, reviewerById.get(review.reviewer_id) ?? null)
+      )
+    );
   })
 );
 

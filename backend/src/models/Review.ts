@@ -16,7 +16,8 @@ import mongoose, { Schema } from 'mongoose';
  *   - reviewed_user_id → User (owner counterpart for the renter flow)
  *
  * One review per (reviewer_id, rental_request_id) via unique compound index.
- * Completed-rental / API enforcement belongs to US-19.4 / US-19.5.
+ * Create/list endpoints: US-19.4. Completed-rental / one-review / rating
+ * request-layer enforcement: US-19.5.
  */
 
 export const STAR_RATING_MIN = 1;
@@ -153,7 +154,7 @@ reviewSchema.pre('validate', function () {
 export const Review =
   mongoose.models.Review || mongoose.model<ReviewDoc>('Review', reviewSchema);
 
-/** API-facing row shape for later create/list endpoints (US-19.4). */
+/** Persist/create row without nested reviewer (legacy/model tests). */
 export function toReviewRow(review: ReviewDoc) {
   return {
     id: review._id,
@@ -164,5 +165,38 @@ export function toReviewRow(review: ReviewDoc) {
     rating: review.rating,
     comment: review.comment,
     created_at: review.created_at.toISOString(),
+  };
+}
+
+/** Safe display label — never exposes email/password. */
+export function reviewerDisplayLabel(
+  user: { first_name?: string; last_name?: string } | null | undefined,
+  reviewerId: number
+): string {
+  if (!user) return `User #${reviewerId}`;
+  const name = `${user.first_name ?? ''} ${user.last_name ?? ''}`.trim();
+  return name || `User #${reviewerId}`;
+}
+
+/**
+ * US-19.4 list/create API item for ListingDetailPage.
+ * Resolves reviewer label from User; does not denormalize into Review.
+ */
+export function toReviewListItem(
+  review: ReviewDoc,
+  reviewer: { first_name?: string; last_name?: string } | null | undefined
+) {
+  return {
+    id: review._id,
+    rental_request_id: review.rental_request_id,
+    listing_id: review.listing_id,
+    reviewed_user_id: review.reviewed_user_id,
+    rating: review.rating,
+    comment: review.comment,
+    created_at: review.created_at.toISOString(),
+    reviewer: {
+      id: review.reviewer_id,
+      label: reviewerDisplayLabel(reviewer, review.reviewer_id),
+    },
   };
 }
