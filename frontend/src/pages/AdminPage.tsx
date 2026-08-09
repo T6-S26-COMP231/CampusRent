@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { CheckCircle2, ShieldCheck, UserCheck, UserX } from 'lucide-react';
+import { CheckCircle2, FileQuestion, ShieldCheck, UserCheck, UserX } from 'lucide-react';
 import ActivityDashboard from '../components/ActivityDashboard';
 import ModerationQueue from '../components/ModerationQueue';
 import ModerationReportDetail from '../components/ModerationReportDetail';
@@ -18,6 +18,13 @@ import {
   type ModerationAction,
   type ModerationReportView,
 } from '../utils/moderationQueue';
+import {
+  REQUEST_MORE_INFO_LABEL,
+  buildVerificationActionBody,
+  verificationActionSuccessMessage,
+  verificationPatchPath,
+  type VerificationAction,
+} from '../utils/studentVerification';
 
 /**
  * System Administration Team dashboard.
@@ -83,16 +90,13 @@ export default function AdminPage() {
     void loadReports();
   }, [loadReports]);
 
-  const verifyUser = async (userId: number, action: 'approve' | 'reject') => {
+  const verifyUser = async (userId: number, action: VerificationAction) => {
     setError('');
     setMessage('');
     try {
-      await api.patch(`/admin/verifications/${userId}`, { action });
-      setMessage(
-        action === 'approve'
-          ? 'Student account verified successfully.'
-          : 'Student account rejected.'
-      );
+      await api.patch(verificationPatchPath(userId), buildVerificationActionBody(action));
+      setMessage(verificationActionSuccessMessage(action));
+      // request_more_info keeps the student pending — reload so they stay listed.
       loadUsers();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unable to update verification status');
@@ -219,11 +223,26 @@ export default function AdminPage() {
                 )}
               </div>
               <div className="flex flex-wrap gap-2">
-                <button onClick={() => verifyUser(student.id, 'approve')} className="btn-primary">
+                <button
+                  type="button"
+                  onClick={() => verifyUser(student.id, 'approve')}
+                  className="btn-primary"
+                >
                   <UserCheck className="h-4 w-4" /> Approve
                 </button>
-                <button onClick={() => verifyUser(student.id, 'reject')} className="btn-danger">
+                <button
+                  type="button"
+                  onClick={() => verifyUser(student.id, 'reject')}
+                  className="btn-danger"
+                >
                   <UserX className="h-4 w-4" /> Reject
+                </button>
+                <button
+                  type="button"
+                  onClick={() => verifyUser(student.id, 'request_more_info')}
+                  className="btn-secondary"
+                >
+                  <FileQuestion className="h-4 w-4" /> {REQUEST_MORE_INFO_LABEL}
                 </button>
               </div>
             </article>
