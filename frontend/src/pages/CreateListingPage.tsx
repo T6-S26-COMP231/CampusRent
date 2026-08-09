@@ -1,8 +1,12 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ImagePlus, PackagePlus } from 'lucide-react';
+import { ImagePlus, PackagePlus, X } from 'lucide-react';
 import { api } from '../api/client';
-import { validateListingImages } from '../utils/imageValidation';
+import {
+  appendListingImages,
+  resolveListingImageSelection,
+  validateListingImages,
+} from '../utils/imageValidation';
 
 export default function CreateListingPage() {
   const navigate = useNavigate();
@@ -15,6 +19,7 @@ export default function CreateListingPage() {
     availability: 'available',
   });
   const [images, setImages] = useState<File[]>([]);
+  const [previewUrls, setPreviewUrls] = useState<string[]>([]);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
@@ -22,16 +27,27 @@ export default function CreateListingPage() {
     api.get<string[]>('/listings/categories').then(setCategories).catch(() => {});
   }, []);
 
-  const selectImages = (files: FileList | null) => {
-    const selected = files ? Array.from(files) : [];
-    const validationError = validateListingImages(selected);
-    if (validationError) {
+  useEffect(() => {
+    const urls = images.map((file) => URL.createObjectURL(file));
+    setPreviewUrls(urls);
+    return () => {
+      urls.forEach((url) => URL.revokeObjectURL(url));
+    };
+  }, [images]);
+
+  const selectImages = (fileList: FileList | null) => {
+    const { files, error: selectionError } = resolveListingImageSelection(fileList);
+    if (selectionError) {
       setImages([]);
-      setError(validationError);
+      setError(selectionError);
       return;
     }
     setError('');
-    setImages(selected);
+    setImages(files);
+  };
+
+  const removeSelectedImage = (index: number) => {
+    setImages((current) => current.filter((_, imageIndex) => imageIndex !== index));
   };
 
   const handleSubmit = async (event: React.FormEvent) => {
@@ -47,7 +63,7 @@ export default function CreateListingPage() {
     try {
       const formData = new FormData();
       Object.entries(form).forEach(([key, value]) => formData.append(key, value));
-      images.forEach((image) => formData.append('images', image));
+      appendListingImages(formData, images);
 
       const listing = await api.upload<{ id: number }>('/listings', formData);
       navigate(`/listings/${listing.id}`);
@@ -102,8 +118,38 @@ export default function CreateListingPage() {
             <div className="w-full">
               <label className="block text-sm font-semibold text-slate-800">Listing images</label>
               <p className="mt-1 text-xs text-slate-500">Maximum 5 images, 5 MB each. Accepted formats: JPG, PNG, and WEBP.</p>
-              <input type="file" accept=".jpg,.jpeg,.png,.webp" multiple className="mt-3 block w-full text-sm text-slate-600" onChange={(event) => selectImages(event.target.files)} />
-              {images.length > 0 && <p className="mt-2 text-xs font-semibold text-campus-700">{images.length} image{images.length === 1 ? '' : 's'} selected</p>}
+              <input
+                type="file"
+                accept=".jpg,.jpeg,.png,.webp"
+                multiple
+                className="mt-3 block w-full text-sm text-slate-600"
+                onChange={(event) => {
+                  selectImages(event.target.files);
+                  event.target.value = '';
+                }}
+              />
+              {images.length > 0 && (
+                <>
+                  <p className="mt-2 text-xs font-semibold text-campus-700">
+                    {images.length} image{images.length === 1 ? '' : 's'} selected
+                  </p>
+                  <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3">
+                    {previewUrls.map((url, index) => (
+                      <div key={`${images[index]?.name ?? 'preview'}-${index}`} className="relative overflow-hidden rounded-2xl border border-slate-200 bg-white">
+                        <img src={url} alt={images[index]?.name || `Selected image ${index + 1}`} className="aspect-square w-full object-cover" />
+                        <button
+                          type="button"
+                          onClick={() => removeSelectedImage(index)}
+                          className="absolute right-2 top-2 rounded-full bg-white/95 p-1.5 text-slate-700 shadow-md"
+                          aria-label={`Remove ${images[index]?.name || `image ${index + 1}`}`}
+                        >
+                          <X className="h-4 w-4" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </>
+              )}
             </div>
           </div>
         </div>

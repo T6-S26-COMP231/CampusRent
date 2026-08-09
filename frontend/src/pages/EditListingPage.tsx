@@ -1,9 +1,12 @@
 import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { ImagePlus, Trash2 } from 'lucide-react';
+import { ImagePlus, Trash2, X } from 'lucide-react';
 import { api, assetUrl, Listing } from '../api/client';
 import { useAuth } from '../context/AuthContext';
-import { validateListingImages } from '../utils/imageValidation';
+import {
+  appendListingImages,
+  resolveListingImageSelection,
+} from '../utils/imageValidation';
 
 export default function EditListingPage() {
   const { id } = useParams();
@@ -13,6 +16,7 @@ export default function EditListingPage() {
   const [listing, setListing] = useState<Listing | null>(null);
   const [categories, setCategories] = useState<string[]>([]);
   const [newImages, setNewImages] = useState<File[]>([]);
+  const [newPreviewUrls, setNewPreviewUrls] = useState<string[]>([]);
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
   const [loading, setLoading] = useState(false);
@@ -40,22 +44,29 @@ export default function EditListingPage() {
     loadListing();
   }, [id, navigate, user]);
 
-  const selectImages = (files: FileList | null) => {
-    const selected = files ? Array.from(files) : [];
-    const currentCount = listing?.images.length || 0;
-    const validationError = validateListingImages(selected);
-    if (validationError) {
+  useEffect(() => {
+    const urls = newImages.map((file) => URL.createObjectURL(file));
+    setNewPreviewUrls(urls);
+    return () => {
+      urls.forEach((url) => URL.revokeObjectURL(url));
+    };
+  }, [newImages]);
+
+  const selectImages = (fileList: FileList | null) => {
+    const { files, error: selectionError } = resolveListingImageSelection(fileList, {
+      existingCount: listing?.images.length || 0,
+    });
+    if (selectionError) {
       setNewImages([]);
-      setError(validationError);
-      return;
-    }
-    if (currentCount + selected.length > 5) {
-      setNewImages([]);
-      setError(`You can add only ${Math.max(0, 5 - currentCount)} more image(s). A listing cannot exceed 5 images.`);
+      setError(selectionError);
       return;
     }
     setError('');
-    setNewImages(selected);
+    setNewImages(files);
+  };
+
+  const removeNewImage = (index: number) => {
+    setNewImages((current) => current.filter((_, imageIndex) => imageIndex !== index));
   };
 
   const handleSubmit = async (event: React.FormEvent) => {
@@ -66,7 +77,7 @@ export default function EditListingPage() {
     try {
       const formData = new FormData();
       Object.entries(form).forEach(([key, value]) => formData.append(key, value));
-      newImages.forEach((image) => formData.append('images', image));
+      appendListingImages(formData, newImages);
       await api.uploadPut(`/listings/${id}`, formData);
       setNewImages([]);
       setMessage('Listing updated successfully.');
@@ -173,8 +184,39 @@ export default function EditListingPage() {
               ))}
             </div>
           ) : <p className="mt-3 text-sm text-slate-500">No images are currently attached.</p>}
-          <input type="file" accept=".jpg,.jpeg,.png,.webp" multiple className="mt-4 block w-full text-sm text-slate-600" onChange={(event) => selectImages(event.target.files)} />
+          <input
+            type="file"
+            accept=".jpg,.jpeg,.png,.webp"
+            multiple
+            className="mt-4 block w-full text-sm text-slate-600"
+            onChange={(event) => {
+              selectImages(event.target.files);
+              event.target.value = '';
+            }}
+          />
           <p className="mt-2 text-xs text-slate-400">Existing and newly selected images combined cannot exceed 5. Each image must be JPG, PNG, or WEBP and 5 MB or smaller.</p>
+          {newImages.length > 0 && (
+            <>
+              <p className="mt-3 text-xs font-semibold text-campus-700">
+                {newImages.length} new image{newImages.length === 1 ? '' : 's'} selected
+              </p>
+              <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3">
+                {newPreviewUrls.map((url, index) => (
+                  <div key={`${newImages[index]?.name ?? 'new'}-${index}`} className="relative overflow-hidden rounded-2xl border border-slate-200 bg-white">
+                    <img src={url} alt={newImages[index]?.name || `New image ${index + 1}`} className="aspect-square w-full object-cover" />
+                    <button
+                      type="button"
+                      onClick={() => removeNewImage(index)}
+                      className="absolute right-2 top-2 rounded-full bg-white/95 p-1.5 text-slate-700 shadow-md"
+                      aria-label={`Remove ${newImages[index]?.name || `new image ${index + 1}`}`}
+                    >
+                      <X className="h-4 w-4" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
         </div>
 
         <div className="flex flex-col gap-3 sm:flex-row">

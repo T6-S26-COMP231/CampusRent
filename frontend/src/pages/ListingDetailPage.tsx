@@ -30,6 +30,10 @@ import {
   type ReviewDisplayItem,
 } from '../utils/ratingsReviews';
 import { ConversationTarget } from '../utils/startConversation';
+import {
+  clampActiveImageIndex,
+  listingDetailImageEntries,
+} from '../utils/imageValidation';
 
 type ReportPanel = 'listing' | 'user' | null;
 
@@ -45,6 +49,8 @@ export default function ListingDetailPage() {
   const [endDate, setEndDate] = useState('');
   const [success, setSuccess] = useState('');
   const [error, setError] = useState('');
+  const [activeImageIndex, setActiveImageIndex] = useState(0);
+  const [mainImageFailed, setMainImageFailed] = useState(false);
   const [reportPanel, setReportPanel] = useState<ReportPanel>(null);
   const [conversationNotice, setConversationNotice] = useState<{
     message: string;
@@ -84,6 +90,8 @@ export default function ListingDetailPage() {
       ]);
       setListing(listingResult);
       setMyRequest(requestResult);
+      setActiveImageIndex(0);
+      setMainImageFailed(false);
       await loadReviews(listingId, listingResult.title);
     } catch {
       navigate('/browse');
@@ -131,6 +139,10 @@ export default function ListingDetailPage() {
 
   if (!listing) return null;
 
+  const galleryImages = listingDetailImageEntries(listing.images);
+  const safeActiveIndex = clampActiveImageIndex(activeImageIndex, galleryImages.length);
+  const activeImage = galleryImages[safeActiveIndex] ?? null;
+
   // Compare with numeric coercion — string/number id mismatch must not hide controls.
   const isOwner = sameEntityId(user?.id, listing.owner?.id);
   const {
@@ -167,23 +179,52 @@ export default function ListingDetailPage() {
 
       <div className="grid gap-8 lg:grid-cols-[1.08fr_0.92fr]">
         <section>
-          {listing.images?.length ? (
+          {activeImage ? (
             <div className="grid gap-3">
-              <img
-                src={assetUrl(listing.images[0].url)}
-                alt={listing.title}
-                className="aspect-[4/3] w-full rounded-3xl border border-slate-200 object-cover shadow-card"
-              />
-              {listing.images.length > 1 && (
-                <div className="grid grid-cols-4 gap-3">
-                  {listing.images.slice(1, 5).map((image, index) => (
-                    <img
-                      key={`${image.url}-${index}`}
-                      src={assetUrl(image.url)}
-                      alt={`${listing.title} ${index + 2}`}
-                      className="aspect-square rounded-2xl border border-slate-200 object-cover"
-                    />
-                  ))}
+              {mainImageFailed ? (
+                <div className="flex aspect-[4/3] items-center justify-center rounded-3xl border border-campus-100 bg-gradient-to-br from-campus-50 to-white shadow-card">
+                  <Package className="h-24 w-24 text-campus-200" />
+                </div>
+              ) : (
+                <img
+                  key={activeImage.url}
+                  src={assetUrl(activeImage.url)}
+                  alt={`${listing.title} ${safeActiveIndex + 1}`}
+                  className="aspect-[4/3] w-full rounded-3xl border border-slate-200 object-cover shadow-card"
+                  onError={() => setMainImageFailed(true)}
+                />
+              )}
+              {galleryImages.length > 1 && (
+                <div className="grid grid-cols-5 gap-3">
+                  {galleryImages.map((image) => {
+                    const selected = image.index === safeActiveIndex;
+                    return (
+                      <button
+                        key={`${image.url}-${image.index}`}
+                        type="button"
+                        onClick={() => {
+                          setActiveImageIndex(image.index);
+                          setMainImageFailed(false);
+                        }}
+                        className={`overflow-hidden rounded-2xl border ${
+                          selected
+                            ? 'border-campus-500 ring-2 ring-campus-200'
+                            : 'border-slate-200'
+                        }`}
+                        aria-label={`View image ${image.index + 1} of ${galleryImages.length}`}
+                        aria-pressed={selected}
+                      >
+                        <img
+                          src={assetUrl(image.url)}
+                          alt={`${listing.title} thumbnail ${image.index + 1}`}
+                          className="aspect-square w-full object-cover"
+                          onError={(event) => {
+                            event.currentTarget.style.visibility = 'hidden';
+                          }}
+                        />
+                      </button>
+                    );
+                  })}
                 </div>
               )}
             </div>
