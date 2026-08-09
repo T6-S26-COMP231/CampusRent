@@ -138,8 +138,8 @@ describe('US-01.4 direct-route and catalogue regression', () => {
       /path="listings\/:id"[\s\S]*?requireVerifiedStudent/
     );
 
-    // Guest catalogue still does not call the guest API in this task (#192).
-    assert.equal(catalogueSource.includes('/api/guest/listings'), false);
+    // Guest catalogue uses the public preview client helper (US-01.5).
+    assert.ok(catalogueSource.includes('api.getGuestListings'));
     assert.equal(catalogueSource.includes('getAdminActivity'), false);
   });
 });

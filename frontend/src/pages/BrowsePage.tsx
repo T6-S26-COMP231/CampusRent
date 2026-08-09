@@ -18,8 +18,8 @@ interface ListingResponse {
 
 /**
  * Catalogue entry at /browse.
- * Guests see the limited GuestCatalogue (US-01.2, no guest API yet).
- * Verified students keep the existing US-08/US-09 registered browse.
+ * Guests see GuestCatalogue wired to GET /api/guest/listings (US-01.5).
+ * Verified students keep the existing US-08/US-09 registered /api/listings browse.
  */
 export default function BrowsePage() {
   const { user, loading: authLoading, isVerified, isAdmin } = useAuth();

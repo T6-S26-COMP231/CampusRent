@@ -38,7 +38,7 @@
  * US-01.2 UI + US-01.4 restricted-action / privacy hardening:
  *   Guest cards accept GuestListingPreview only (never a full Listing).
  *   Restricted actions open the registration prompt before any API call.
- * Guest preview API exists (#190); frontend↔backend wiring is #192.
+ * US-01.5 (#192): GuestCatalogue ↔ GET /api/guest/listings.
  */
 
 /** Same listing categories enforced by backend/src/utils/validation.ts. */
@@ -134,6 +134,7 @@ export const GUEST_CATEGORY_FILTER_LABEL = 'Category';
 export const GUEST_CATEGORY_ALL_LABEL = 'All categories';
 export const GUEST_EMPTY_RESULTS_MESSAGE = 'No listings match your search.';
 export const GUEST_LOADING_LABEL = 'Loading guest listings...';
+export const GUEST_LOAD_ERROR_FALLBACK = 'Unable to load guest listings.';
 export const GUEST_SEARCH_SUBMIT_LABEL = 'Search';
 export const GUEST_CREATE_LISTING_CTA_LABEL = 'Create a listing';
 export const GUEST_REQUEST_RENTAL_CTA_LABEL = 'Request rental';
@@ -184,6 +185,11 @@ export type GuestKeywordSearchField = (typeof GUEST_KEYWORD_SEARCH_FIELDS)[numbe
 export interface GuestCatalogueFilters {
   q: string | null;
   category: GuestListingCategory | null;
+}
+
+/** Public guest preview list response from GET /api/guest/listings. */
+export interface GuestListingsResponse {
+  listings: GuestListingPreview[];
 }
 
 export const GUEST_WORKFLOW_STEPS = [
@@ -492,6 +498,144 @@ export function guestCatalogueUiStatus(options: {
   if (options.error) return 'error';
   if ((options.previewCount ?? 0) <= 0) return 'empty';
   return 'ready';
+}
+
+/**
+ * Build GET /guest/listings query path.
+ * Omits blank q / blank category / "all". Never sends null/undefined params.
+ */
+export function buildGuestListingsPath(
+  filters: GuestCatalogueFilters = defaultGuestCatalogueFilters()
+): string {
+  const params = new URLSearchParams();
+  if (filters.q) {
+    params.set('q', filters.q);
+  }
+  if (filters.category) {
+    params.set('category', filters.category);
+  }
+  const query = params.toString();
+  return query ? `/guest/listings?${query}` : '/guest/listings';
+}
+
+export function buildGetGuestListingsCall(
+  filters: GuestCatalogueFilters = defaultGuestCatalogueFilters()
+): { method: 'GET'; path: string; requiresAuth: false } {
+  return {
+    method: 'GET',
+    path: buildGuestListingsPath(filters),
+    requiresAuth: false,
+  };
+}
+
+export function canStartGuestCatalogueRequest(options: {
+  loading?: boolean;
+}): boolean {
+  return !options.loading;
+}
+
+/**
+ * Map a guest listings API payload through the preview allow-list only.
+ * Extra owner/contact/description keys are dropped, never rendered.
+ */
+export function mapGuestListingsFromApi(value: unknown): GuestListingPreview[] {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return [];
+  }
+  const listings = (value as { listings?: unknown }).listings;
+  if (!Array.isArray(listings)) {
+    return [];
+  }
+
+  const mapped: GuestListingPreview[] = [];
+  for (const item of listings) {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) continue;
+    const row = item as Record<string, unknown>;
+    if (typeof row.id !== 'number' || !Number.isFinite(row.id)) continue;
+    if (typeof row.title !== 'string') continue;
+    if (typeof row.category !== 'string') continue;
+    if (row.availability !== 'available' && row.availability !== 'unavailable') {
+      continue;
+    }
+    const thumbnail =
+      row.thumbnail_url == null
+        ? null
+        : typeof row.thumbnail_url === 'string'
+          ? row.thumbnail_url
+          : null;
+    mapped.push(
+      pickGuestListingPreviewAllowList({
+        id: row.id,
+        title: row.title,
+        category: row.category,
+        availability: row.availability,
+        thumbnail_url: thumbnail,
+      })
+    );
+  }
+  return mapped;
+}
+
+export type GuestCatalogueFetchResult = {
+  called: boolean;
+  status: Exclude<GuestCatalogueUiStatus, 'loading'>;
+  previews: GuestListingPreview[];
+  appliedFilters: GuestCatalogueFilters;
+  error: string;
+};
+
+/**
+ * Guest catalogue load / search flow against GET /api/guest/listings.
+ * Backend is the search authority — callers must not filter locally.
+ */
+export async function runGuestCatalogueFetchFlow(
+  fetchListings: (
+    filters: GuestCatalogueFilters
+  ) => Promise<GuestListingsResponse | unknown>,
+  draftFilters: GuestCatalogueFilters = defaultGuestCatalogueFilters(),
+  previous: {
+    previews: GuestListingPreview[];
+    appliedFilters: GuestCatalogueFilters;
+  } = {
+    previews: [],
+    appliedFilters: defaultGuestCatalogueFilters(),
+  }
+): Promise<GuestCatalogueFetchResult> {
+  const normalized = normalizeGuestCatalogueFilters(draftFilters);
+  if (normalized.error) {
+    return {
+      called: false,
+      status: 'error',
+      previews: previous.previews,
+      appliedFilters: previous.appliedFilters,
+      error: normalized.error,
+    };
+  }
+
+  try {
+    const response = await fetchListings(normalized.filters);
+    const previews = mapGuestListingsFromApi(response);
+    return {
+      called: true,
+      status: previews.length === 0 ? 'empty' : 'ready',
+      previews,
+      appliedFilters: normalized.filters,
+      error: '',
+    };
+  } catch (err) {
+    const message =
+      err instanceof Error && err.message.trim()
+        ? err.message
+        : GUEST_LOAD_ERROR_FALLBACK;
+    return {
+      called: true,
+      status: 'error',
+      // Do not keep or fabricate rows after a failed guest catalogue request.
+      previews: [],
+      appliedFilters: previous.appliedFilters,
+      error: message,
+    };
+  }
 }
 
 /**

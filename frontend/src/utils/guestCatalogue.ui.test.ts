@@ -136,12 +136,11 @@ describe('US-01.2 guest keyword and category filter UI', () => {
       category: 'Electronics',
     });
 
-    // Search prepares filters only — catalogue must not invent local result rows.
+    // Search prepares filters for the guest endpoint — catalogue must not invent local rows.
     assert.equal(catalogueSource.includes('Math.random'), false);
     assert.equal(catalogueSource.includes('fake'), false);
-    assert.equal(catalogueSource.includes('/api/'), false);
     assert.equal(catalogueSource.includes('getAdminActivity'), false);
-    assert.equal(catalogueSource.includes("api.get"), false);
+    assert.ok(catalogueSource.includes('api.getGuestListings'));
   });
 });
 

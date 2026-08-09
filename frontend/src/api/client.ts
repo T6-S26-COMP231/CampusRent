@@ -4,6 +4,12 @@ import {
   type ActivityReport,
   type ActivityReportFilters,
 } from '../utils/activityMetrics';
+import {
+  buildGuestListingsPath,
+  defaultGuestCatalogueFilters,
+  type GuestCatalogueFilters,
+  type GuestListingsResponse,
+} from '../utils/guestCatalogue';
 
 const API_BASE = import.meta.env.VITE_API_URL
   ? `${import.meta.env.VITE_API_URL}/api`
@@ -247,6 +253,17 @@ export const api = {
     filters: ActivityReportFilters = defaultActivityFilters()
   ): Promise<ActivityReport> =>
     request<ActivityReport>(buildAdminActivityPath(filters)),
+
+  /**
+   * US-01.5 — public limited guest listing previews.
+   * GET /api/guest/listings with optional q / category.
+   * No auth token is required or manufactured; Authorization is only sent when
+   * a session token already exists (same as other public-capable GETs).
+   */
+  getGuestListings: (
+    filters: GuestCatalogueFilters = defaultGuestCatalogueFilters()
+  ): Promise<GuestListingsResponse> =>
+    request<GuestListingsResponse>(buildGuestListingsPath(filters)),
 };
 
 export interface User {

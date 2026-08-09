@@ -1,5 +1,13 @@
-import { FormEvent, useMemo, useState } from 'react';
+import {
+  FormEvent,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import { Filter, LoaderCircle, Package, Search } from 'lucide-react';
+import { api } from '../api/client';
 import {
   GUEST_CATALOGUE_DESCRIPTION,
   GUEST_CATALOGUE_HEADING,
@@ -9,59 +17,103 @@ import {
   GUEST_EMPTY_RESULTS_MESSAGE,
   GUEST_KEYWORD_FILTER_LABEL,
   GUEST_KEYWORD_PLACEHOLDER,
+  GUEST_LOAD_ERROR_FALLBACK,
   GUEST_LOADING_LABEL,
   GUEST_SEARCH_SUBMIT_LABEL,
   attemptGuestRestrictedActionUi,
+  canStartGuestCatalogueRequest,
   defaultGuestCatalogueFilters,
   guestCatalogueUiStatus,
   guestCategorySelectOptions,
+  mapGuestListingsFromApi,
   normalizeGuestCatalogueFilters,
   type GuestCatalogueFilters,
   type GuestListingPreview,
+  type GuestListingsResponse,
   type GuestRestrictedAction,
 } from '../utils/guestCatalogue';
 import GuestListingCard from './GuestListingCard';
 import GuestRegistrationPrompt from './GuestRegistrationPrompt';
 
 export interface GuestCatalogueProps {
-  /** Supplied preview rows from later API integration — never fabricated here. */
-  previews?: GuestListingPreview[] | null;
-  loading?: boolean;
-  error?: string;
-  /** Optional hook for later #192 wiring; must not invent results here. */
-  onApplyFilters?: (filters: GuestCatalogueFilters) => void;
+  /** Optional inject for tests — defaults to api.getGuestListings. */
+  fetchGuestListings?: (
+    filters: GuestCatalogueFilters
+  ) => Promise<GuestListingsResponse>;
+  /** Skip initial auto-load (tests). */
+  autoLoad?: boolean;
 }
 
 /**
- * US-01.2 — guest catalogue: limited cards, keyword/category controls,
- * and registration prompts. No guest API calls in this task.
+ * US-01.5 — guest catalogue wired to GET /api/guest/listings.
+ * Restricted CTAs still open the registration prompt before any registered API.
  */
 export default function GuestCatalogue({
-  previews = null,
-  loading = false,
-  error = '',
-  onApplyFilters,
+  fetchGuestListings = (filters) => api.getGuestListings(filters),
+  autoLoad = true,
 }: GuestCatalogueProps) {
   const [draftKeyword, setDraftKeyword] = useState('');
   const [draftCategory, setDraftCategory] = useState('');
   const [appliedFilters, setAppliedFilters] = useState<GuestCatalogueFilters>(
     defaultGuestCatalogueFilters()
   );
+  const [previews, setPreviews] = useState<GuestListingPreview[]>([]);
+  const [loading, setLoading] = useState(autoLoad);
+  const [error, setError] = useState('');
   const [filterError, setFilterError] = useState('');
   const [promptAction, setPromptAction] = useState<GuestRestrictedAction | null>(
     null
   );
 
-  const rows = previews ?? [];
+  const fetchGuestListingsRef = useRef(fetchGuestListings);
+  fetchGuestListingsRef.current = fetchGuestListings;
+
   const status = guestCatalogueUiStatus({
     loading,
     error: error || filterError,
-    previewCount: rows.length,
+    previewCount: previews.length,
   });
   const categoryOptions = useMemo(() => guestCategorySelectOptions(), []);
+  const busy = !canStartGuestCatalogueRequest({ loading });
+
+  const loadPreviews = useCallback(async (filters: GuestCatalogueFilters) => {
+    const normalized = normalizeGuestCatalogueFilters(filters);
+    if (normalized.error) {
+      setFilterError(normalized.error);
+      return;
+    }
+
+    setLoading(true);
+    setError('');
+    setFilterError('');
+    try {
+      const response = await fetchGuestListingsRef.current(normalized.filters);
+      // Allow-list only — never expand into owner/description/rental_terms.
+      setPreviews(mapGuestListingsFromApi(response));
+      setAppliedFilters(normalized.filters);
+    } catch (err) {
+      setPreviews([]);
+      setError(
+        err instanceof Error && err.message.trim()
+          ? err.message
+          : GUEST_LOAD_ERROR_FALLBACK
+      );
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!autoLoad) return;
+    void loadPreviews(defaultGuestCatalogueFilters());
+    // Initial unfiltered guest catalogue only — Search calls loadPreviews explicitly.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoLoad]);
 
   const handleSearch = (event: FormEvent) => {
     event.preventDefault();
+    if (busy) return;
+
     const { filters, error: normalizeError } = normalizeGuestCatalogueFilters({
       q: draftKeyword,
       category: draftCategory,
@@ -70,9 +122,10 @@ export default function GuestCatalogue({
       setFilterError(normalizeError);
       return;
     }
+
+    // Do not claim applied filters / results until the server responds.
     setFilterError('');
-    setAppliedFilters(filters);
-    onApplyFilters?.(filters);
+    void loadPreviews(filters);
   };
 
   const handleRestrictedAction = (action: GuestRestrictedAction) => {
@@ -170,6 +223,7 @@ export default function GuestCatalogue({
           <button
             type="submit"
             className="btn-primary"
+            disabled={busy}
             data-testid="guest-catalogue-search-submit"
           >
             <Filter className="h-4 w-4" /> {GUEST_SEARCH_SUBMIT_LABEL}
@@ -233,7 +287,7 @@ export default function GuestCatalogue({
           className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3"
           data-testid="guest-catalogue-grid"
         >
-          {rows.map((preview) => (
+          {previews.map((preview) => (
             <GuestListingCard
               key={preview.id}
               preview={preview}
