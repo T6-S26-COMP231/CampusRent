@@ -34,9 +34,10 @@
  * RentalRequest.start_date / end_date are rental period fields — not the
  * activity-event timestamp for this report.
  *
- * Implementation boundaries for this file:
- *   Design types/helpers only. No MongoDB aggregation, no admin activity API,
- *   no dashboard widgets, no schema changes.
+ * Aggregation implementation: backend/src/utils/activityAggregation.ts (US-24.4).
+ * Admin endpoint: GET /api/admin/activity.
+ * Date/category filter enforcement: US-24.5 (#183).
+ * Frontend integration: US-24.6 (#184).
  */
 
 import { LISTING_CATEGORIES, type ListingCategory } from './validation';

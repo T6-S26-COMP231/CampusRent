@@ -2,6 +2,8 @@ import { Router } from 'express';
 import { authenticate, requireAdmin } from '../middleware/auth';
 import { User } from '../models/User';
 import { asyncHandler } from '../utils/asyncHandler';
+import { aggregateActivityReport } from '../utils/activityAggregation';
+import { defaultActivityFilters } from '../utils/activityMetrics';
 import { performAdminModerationAction } from '../utils/adminModerationAction';
 import { ModerationActionError } from '../utils/moderationActions';
 import {
@@ -11,6 +13,20 @@ import {
 
 const router = Router();
 router.use(authenticate, requireAdmin);
+
+/**
+ * US-24.4 — platform activity aggregate / activity summary.
+ * Returns ActivityReport-shaped counts. Date/category filter application is
+ * deferred to US-24.5 (#183); this endpoint currently returns the complete
+ * platform aggregate (activity_scope=all, no date/category restriction).
+ */
+router.get(
+  '/activity',
+  asyncHandler(async (_req, res) => {
+    const report = await aggregateActivityReport(defaultActivityFilters(), new Date());
+    return res.status(200).json(report);
+  })
+);
 
 router.get(
   '/verifications',
