@@ -20,7 +20,6 @@ import {
   type ConversationMessage,
 } from '../utils/conversationHistory';
 import {
-  REPORT_NOT_CONNECTED_MESSAGE,
   REPORT_USER_ENTRY_LABEL,
   canReportTarget,
   toReportUserTarget,
@@ -173,10 +172,6 @@ export default function ConversationDetailPage() {
               target={counterpartReportTarget}
               viewerId={viewerId}
               onCancel={() => setShowReportUser(false)}
-              onSubmit={async () => {
-                // US-20.6 wires POST here — do not fabricate a saved report.
-                throw new Error(REPORT_NOT_CONNECTED_MESSAGE);
-              }}
             />
           )}
 

@@ -166,6 +166,16 @@ export const api = {
    */
   getConversationMessages: (conversationId: number): Promise<Message[]> =>
     request<Message[]>(`/conversations/${conversationId}/messages`),
+
+  /**
+   * US-20.6 — submit a user or listing report.
+   * Never includes reporter_id; server derives reporter from auth.
+   */
+  submitReport: (body: SubmitReportBody): Promise<Report> =>
+    request<Report>('/reports', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
 };
 
 export interface User {
@@ -250,4 +260,25 @@ export interface Message {
 /** POST /api/conversations/:id/messages — sender comes from auth only. */
 export interface SendMessageBody {
   body: string;
+}
+
+/** POST /api/reports — reporter comes from auth only. */
+export type ReportTargetType = 'user' | 'listing';
+
+export interface SubmitReportBody {
+  target_type: ReportTargetType;
+  target_id: number;
+  reason: string;
+  details: string;
+}
+
+/** Persisted report returned by POST /api/reports. */
+export interface Report {
+  id: number;
+  reporter_id: number;
+  target_type: ReportTargetType;
+  target_id: number;
+  reason: string;
+  details: string;
+  created_at: string;
 }

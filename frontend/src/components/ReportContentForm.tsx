@@ -1,46 +1,42 @@
 import { FormEvent, useState } from 'react';
+import { api } from '../api/client';
 import {
   CANCEL_REPORT_LABEL,
   REPORT_DETAILS_LABEL,
   REPORT_DETAILS_PLACEHOLDER,
-  REPORT_NOT_CONNECTED_MESSAGE,
   REPORT_REASON_LABEL,
   REPORT_REASON_PLACEHOLDER,
   applyCancelledReportForm,
   applyFailedReportSubmit,
+  applySuccessfulReportSubmit,
   buildSubmitReportBody,
   canSubmitReport,
+  reportErrorMessage,
   reportFormHeading,
   reportSubmitLabel,
   reportTargetSummary,
   reportValidationMessages,
   type ReportTarget,
-  type SubmitReportBody,
 } from '../utils/reportContent';
 
 interface Props {
   target: ReportTarget;
   viewerId: number | undefined;
   onCancel: () => void;
-  /**
-   * US-20.6 integration seam. Until wired, callers should reject so the form
-   * does not claim a fabricated successful save.
-   */
-  onSubmit?: (body: SubmitReportBody) => void | Promise<void>;
-  /** Optional parent-controlled success text after a real save (US-20.6). */
-  successMessage?: string;
+  /** Optional hook after a real successful POST /api/reports. */
+  onSubmitted?: () => void;
 }
 
 /**
- * US-20.2 — reusable report-user / report-listing form.
+ * US-20.2 / US-20.6 — report-user / report-listing form wired to POST /api/reports.
  * Target ids come from the `target` prop only (trusted page context).
+ * Reporter identity is never sent from the client.
  */
 export default function ReportContentForm({
   target,
   viewerId,
   onCancel,
-  onSubmit,
-  successMessage = '',
+  onSubmitted,
 }: Props) {
   const [reason, setReason] = useState('');
   const [details, setDetails] = useState('');
@@ -57,8 +53,6 @@ export default function ReportContentForm({
     submitting,
     viewerId,
   });
-
-  const displayedSuccess = successMessage || success;
 
   const handleCancel = () => {
     const cleared = applyCancelledReportForm();
@@ -93,19 +87,24 @@ export default function ReportContentForm({
     }
 
     // Body is built from trusted `target` prop — never from editable target fields.
+    // Never include reporter_id.
     const body = buildSubmitReportBody(target, reason, details);
     setSubmitting(true);
     try {
-      if (!onSubmit) {
-        throw new Error(REPORT_NOT_CONNECTED_MESSAGE);
-      }
-      await onSubmit(body);
-      // Success confirmation is parent/US-20.6 owned — do not fabricate save copy here.
+      await api.submitReport(body);
+      const applied = applySuccessfulReportSubmit();
+      setReason(applied.reason);
+      setDetails(applied.details);
+      setError(applied.error);
+      setSuccess(applied.success);
+      setReasonError('');
+      setDetailsError('');
+      onSubmitted?.();
     } catch (err) {
       const failed = applyFailedReportSubmit(reason, details, err);
       setReason(failed.reason);
       setDetails(failed.details);
-      setError(failed.error);
+      setError(failed.error || reportErrorMessage(err));
       setSuccess(failed.success);
     } finally {
       setSubmitting(false);
@@ -128,9 +127,9 @@ export default function ReportContentForm({
         </p>
       </div>
 
-      {displayedSuccess && (
+      {success && (
         <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-700">
-          {displayedSuccess}
+          {success}
         </div>
       )}
       {error && (
@@ -151,6 +150,7 @@ export default function ReportContentForm({
             setReason(event.target.value);
             setReasonError('');
             setError('');
+            if (success) setSuccess('');
           }}
           placeholder={REPORT_REASON_PLACEHOLDER}
           disabled={submitting}
@@ -170,6 +170,7 @@ export default function ReportContentForm({
             setDetails(event.target.value);
             setDetailsError('');
             setError('');
+            if (success) setSuccess('');
           }}
           placeholder={REPORT_DETAILS_PLACEHOLDER}
           disabled={submitting}

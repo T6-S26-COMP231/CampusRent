@@ -9,7 +9,6 @@ import {
   REPORT_INCOMPLETE_REASON_MESSAGE,
   REPORT_LISTING_ENTRY_LABEL,
   REPORT_LISTING_HEADING,
-  REPORT_NOT_CONNECTED_MESSAGE,
   REPORT_REASON_OPTIONS,
   REPORT_REASON_PLACEHOLDER,
   REPORT_SUCCESS_MESSAGE,
@@ -167,15 +166,16 @@ describe('US-20.2 report form and reason controls', () => {
     const failed = applyFailedReportSubmit(
       'Keep reason',
       'Keep details',
-      new Error(REPORT_NOT_CONNECTED_MESSAGE)
+      new Error('Listing not found')
     );
     assert.equal(failed.reason, 'Keep reason');
     assert.equal(failed.details, 'Keep details');
-    assert.equal(failed.error, REPORT_NOT_CONNECTED_MESSAGE);
+    assert.equal(failed.error, 'Listing not found');
     assert.equal(failed.success, '');
 
     const success = applySuccessfulReportSubmit();
     assert.equal(success.success, REPORT_SUCCESS_MESSAGE);
+    assert.equal(success.success, 'Report submitted successfully.');
     assert.equal(success.reason, '');
   });
 

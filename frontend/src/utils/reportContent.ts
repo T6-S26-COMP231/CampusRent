@@ -50,8 +50,8 @@
  *   - reporter identity comes from authentication later (US-20.4/20.6) —
  *     never from a user-editable form field
  *
- * Persistence / API / Mongo Report model / admin dashboard belong to
- * US-20.3–20.6 and US-23. This module only captures frontend design shapes.
+ * Persistence uses POST /api/reports (US-20.6). Admin moderation dashboard
+ * belongs to US-23 — not owned by this student submission flow.
  */
 
 export const REPORT_LISTING_HEADING = 'Report listing';
@@ -66,11 +66,7 @@ export const REPORT_REASON_LABEL = 'Reason';
 export const REPORT_DETAILS_LABEL = 'Supporting details';
 export const REPORT_DETAILS_PLACEHOLDER =
   'Describe what happened and why this should be reviewed…';
-export const REPORT_SUCCESS_MESSAGE =
-  'Report submitted. The System Administration Team will review it.';
-/** Shown when the form seam is called before US-20.6 wiring — not a fake save. */
-export const REPORT_NOT_CONNECTED_MESSAGE =
-  'Report submission is not available yet.';
+export const REPORT_SUCCESS_MESSAGE = 'Report submitted successfully.';
 export const REPORT_INCOMPLETE_REASON_MESSAGE = 'A report reason is required.';
 export const REPORT_INCOMPLETE_DETAILS_MESSAGE =
   'Supporting details are required.';
@@ -274,6 +270,39 @@ export function buildSubmitReportBody(
     reason: normalizeReportReason(reason),
     details: normalizeReportDetails(details),
   };
+}
+
+/** US-20.6 — POST /api/reports call descriptor (no reporter_id). */
+export function buildSubmitReportCall(
+  target: ReportTarget,
+  reason: ReportReason,
+  details: string
+): { path: string; method: 'POST'; body: SubmitReportBody } {
+  return {
+    path: '/reports',
+    method: 'POST',
+    body: buildSubmitReportBody(target, reason, details),
+  };
+}
+
+/**
+ * Pure submit-flow helper for tests and form wiring.
+ * Success clears draft only after the provided submit resolves.
+ * Failure preserves draft and exposes an error (never claims success).
+ */
+export async function runReportSubmitFlow(
+  target: ReportTarget,
+  reason: string,
+  details: string,
+  submit: (body: SubmitReportBody) => Promise<unknown>
+): Promise<{ reason: string; details: string; error: string; success: string }> {
+  const body = buildSubmitReportBody(target, reason, details);
+  try {
+    await submit(body);
+    return applySuccessfulReportSubmit();
+  } catch (error) {
+    return applyFailedReportSubmit(reason, details, error);
+  }
 }
 
 export function reportSuccessMessage(): string {

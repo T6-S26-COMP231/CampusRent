@@ -16,7 +16,6 @@ import StartConversationButton from '../components/StartConversationButton';
 import StatusBadge from '../components/StatusBadge';
 import {
   REPORT_LISTING_ENTRY_LABEL,
-  REPORT_NOT_CONNECTED_MESSAGE,
   REPORT_USER_ENTRY_LABEL,
   canReportTarget,
   toReportListingTarget,
@@ -265,10 +264,6 @@ export default function ListingDetailPage() {
               target={activeReportTarget}
               viewerId={user?.id}
               onCancel={() => setReportPanel(null)}
-              onSubmit={async () => {
-                // US-20.6 wires POST here — do not fabricate a saved report.
-                throw new Error(REPORT_NOT_CONNECTED_MESSAGE);
-              }}
             />
           )}
 
