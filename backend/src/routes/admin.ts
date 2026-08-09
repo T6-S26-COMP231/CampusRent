@@ -133,12 +133,19 @@ router.post(
   })
 );
 
+/**
+ * US-22 — admin verification decisions for pending students.
+ * Actions: approve → verified, reject → rejected,
+ * request_more_info → remains pending (TAC Test 4).
+ */
 router.patch(
   '/verifications/:id',
   asyncHandler(async (req, res) => {
     const { action } = req.body as { action?: string };
-    if (!['approve', 'reject'].includes(String(action))) {
-      return res.status(400).json({ error: 'Action must be approve or reject' });
+    if (!['approve', 'reject', 'request_more_info'].includes(String(action))) {
+      return res.status(400).json({
+        error: 'Action must be approve, reject, or request_more_info',
+      });
     }
 
     const userId = Number(req.params.id);
@@ -154,8 +161,14 @@ router.patch(
       return res.status(400).json({ error: 'This student account has already been processed' });
     }
 
-    user.verification_status = action === 'approve' ? 'verified' : 'rejected';
-    await user.save();
+    // TAC Test 4: request more information must leave verification_status pending.
+    if (action === 'approve') {
+      user.verification_status = 'verified';
+      await user.save();
+    } else if (action === 'reject') {
+      user.verification_status = 'rejected';
+      await user.save();
+    }
 
     return res.json({
       id: user._id,
@@ -164,6 +177,7 @@ router.patch(
       last_name: user.last_name,
       verification_status: user.verification_status,
       created_at: user.created_at.toISOString(),
+      action,
     });
   })
 );
