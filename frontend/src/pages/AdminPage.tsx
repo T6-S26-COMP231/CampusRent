@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { CheckCircle2, ShieldCheck, UserCheck, UserX } from 'lucide-react';
+import ActivityDashboard from '../components/ActivityDashboard';
 import ModerationQueue from '../components/ModerationQueue';
 import ModerationReportDetail from '../components/ModerationReportDetail';
 import { api, User } from '../api/client';
@@ -20,7 +21,7 @@ import {
 
 /**
  * System Administration Team dashboard.
- * US-22 verification + US-23.6 moderation queue / detail / action integration.
+ * US-22 verification + US-23.6 moderation + US-24.2 activity-monitoring layout.
  */
 export default function AdminPage() {
   const [pendingUsers, setPendingUsers] = useState<User[]>([]);
@@ -160,8 +161,8 @@ export default function AdminPage() {
             </p>
             <h1 className="mt-2 font-display text-3xl font-extrabold">Admin dashboard</h1>
             <p className="mt-2 max-w-2xl text-sm leading-6 text-campus-100">
-              Verify student registrations and review reported users or listings so CampusRent stays
-              safe and trustworthy.
+              Verify student registrations, review reported users or listings, and monitor platform
+              activity so CampusRent stays safe and trustworthy.
             </p>
           </div>
         </div>
@@ -258,6 +259,9 @@ export default function AdminPage() {
           actionError={moderationActionError}
         />
       </div>
+
+      {/* US-24.2 — layout only; metrics/filters/report generation connect in later tasks. */}
+      <ActivityDashboard />
     </div>
   );
 }

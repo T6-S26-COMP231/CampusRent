@@ -35,9 +35,9 @@
  *
  * Date filter: created_at on each collection (no fabricated resolved_at).
  *
- * Implementation boundaries for this file:
- *   Design helpers/types only. No dashboard widgets, no aggregation API,
- *   no frontend/backend integration.
+ * US-24.2 adds layout/presentation helpers for AdminPage ActivityDashboard.
+ * Still no aggregation API, real metric counts, working filters, or report
+ * generation — those belong to later US-24 tasks.
  */
 
 /** Same listing categories enforced by backend validation. */
@@ -230,14 +230,33 @@ export const ACTIVITY_REPORT_EXCLUDED_FIELDS = [
 export const ACTIVITY_DASHBOARD_PATH = '/admin';
 export const ACTIVITY_SECTION_LABEL = 'Platform activity';
 export const ACTIVITY_DASHBOARD_HEADING = 'Platform activity';
+export const ACTIVITY_DASHBOARD_DESCRIPTION =
+  'Monitor CampusRent usage with date and activity filters, then generate an administrative activity summary.';
 export const ACTIVITY_FILTERS_HEADING = 'Activity filters';
+export const ACTIVITY_FILTERS_HINT =
+  'Filter controls are available for layout. Applying filters does not update statistics until activity reporting is connected.';
+export const ACTIVITY_STATISTICS_HEADING = 'Platform statistics';
+export const ACTIVITY_METRICS_HEADING = 'Activity metrics';
+export const ACTIVITY_METRICS_PLACEHOLDER_LABEL = 'Awaiting statistics';
+export const ACTIVITY_METRICS_PLACEHOLDER_HINT =
+  'Metric cards will show live counts after platform statistics are connected. No fabricated values are shown here.';
 export const ACTIVITY_REPORT_HEADING = 'Activity summary';
 export const ACTIVITY_GENERATE_REPORT_LABEL = 'Generate report';
+export const ACTIVITY_REPORT_NOT_CONNECTED_MESSAGE =
+  'Activity report generation is not connected yet.';
+export const ACTIVITY_REPORT_RESULT_PLACEHOLDER =
+  'Generated activity summaries will appear here once reporting is connected.';
+export const ACTIVITY_LOADING_LABEL = 'Loading platform activity...';
 export const ACTIVITY_NO_DATA_MESSAGE =
   'No platform activity matches the selected filters.';
 export const ACTIVITY_DATE_FORMAT_MESSAGE = 'Dates must use YYYY-MM-DD format.';
 export const ACTIVITY_DATE_RANGE_ORDER_MESSAGE =
   'Start date cannot be after end date.';
+export const ACTIVITY_START_DATE_LABEL = 'Start date';
+export const ACTIVITY_END_DATE_LABEL = 'End date';
+export const ACTIVITY_SCOPE_FILTER_LABEL = 'Activity scope';
+export const ACTIVITY_LISTING_CATEGORY_FILTER_LABEL = 'Listing category';
+export const ACTIVITY_LISTING_CATEGORY_ALL_LABEL = 'All categories';
 
 export const ACTIVITY_WORKFLOW_STEPS = [
   'open_activity_dashboard',
@@ -248,6 +267,125 @@ export const ACTIVITY_WORKFLOW_STEPS = [
 ] as const;
 
 export type ActivityWorkflowStep = (typeof ACTIVITY_WORKFLOW_STEPS)[number];
+
+/** Layout sections the ActivityDashboard must expose for later integration. */
+export const ACTIVITY_DASHBOARD_LAYOUT_SECTIONS = [
+  'heading',
+  'filters',
+  'statistics',
+  'metric_grid',
+  'report',
+  'no_data',
+  'loading',
+  'error',
+] as const;
+
+export type ActivityDashboardLayoutSection =
+  (typeof ACTIVITY_DASHBOARD_LAYOUT_SECTIONS)[number];
+
+export type ActivityDashboardUiStatus =
+  | 'layout'
+  | 'loading'
+  | 'error'
+  | 'no_data'
+  | 'ready';
+
+/**
+ * Presentation status for the activity dashboard.
+ * US-24.2 defaults to layout (structure only, no fabricated ready data).
+ */
+export function activityDashboardUiStatus(options: {
+  loading?: boolean;
+  error?: string;
+  showNoData?: boolean;
+  hasConnectedMetrics?: boolean;
+}): ActivityDashboardUiStatus {
+  if (options.loading) return 'loading';
+  if (options.error) return 'error';
+  if (options.showNoData) return 'no_data';
+  if (options.hasConnectedMetrics) return 'ready';
+  return 'layout';
+}
+
+export function activityScopeSelectOptions(): Array<{
+  value: ActivityScope;
+  label: string;
+}> {
+  return ACTIVITY_SCOPES.map((value) => ({
+    value,
+    label: ACTIVITY_SCOPE_LABELS[value],
+  }));
+}
+
+export function activityListingCategorySelectOptions(): Array<{
+  value: '' | ActivityListingCategory;
+  label: string;
+}> {
+  return [
+    { value: '', label: ACTIVITY_LISTING_CATEGORY_ALL_LABEL },
+    ...ACTIVITY_LISTING_CATEGORIES.map((value) => ({
+      value,
+      label: value,
+    })),
+  ];
+}
+
+/** Metric card shells for the selected scope — labels only, never invented counts. */
+export function activityMetricLayoutSlots(
+  scope: ActivityScope
+): Array<{ key: ActivityMetricKey; label: string }> {
+  return metricsForScope(scope).map((key) => ({
+    key,
+    label: ACTIVITY_METRIC_LABELS[key],
+  }));
+}
+
+export function formatActivityFilterSummary(filters: ActivityReportFilters): string {
+  const start = filters.start_date ?? 'Any start';
+  const end = filters.end_date ?? 'Any end';
+  const scope = ACTIVITY_SCOPE_LABELS[filters.activity_scope];
+  const category =
+    filters.listing_category ?? ACTIVITY_LISTING_CATEGORY_ALL_LABEL;
+  return `${start} → ${end} · ${scope} · ${category}`;
+}
+
+/** US-24.2 — Generate Report remains unconnected (no fabricated report). */
+export function attemptActivityReportGenerationUi(): {
+  notice: string;
+  report: null;
+  success: string;
+} {
+  return {
+    notice: ACTIVITY_REPORT_NOT_CONNECTED_MESSAGE,
+    report: null,
+    success: '',
+  };
+}
+
+export function activityNoDataPresentation(show: boolean): {
+  visible: boolean;
+  message: string;
+} {
+  return {
+    visible: show,
+    message: ACTIVITY_NO_DATA_MESSAGE,
+  };
+}
+
+/** Guard against accidental fake statistics in layout-only mode. */
+export function activityLayoutDisplaysFabricatedCounts(
+  displayedValues: Array<string | number | null | undefined>
+): boolean {
+  return displayedValues.some((value) => {
+    if (typeof value === 'number') return true;
+    if (typeof value !== 'string') return false;
+    const trimmed = value.trim();
+    if (!trimmed || trimmed === '—' || trimmed === ACTIVITY_METRICS_PLACEHOLDER_LABEL) {
+      return false;
+    }
+    return /^\d+$/.test(trimmed);
+  });
+}
 
 const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
