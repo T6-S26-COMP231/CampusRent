@@ -30,10 +30,10 @@
  *   Later US-02 tasks open guest basic details on that path without making
  *   the registered full-details API public. #198 owns GET /api/guest/listings/:id.
  *
- * This file is DESIGN / CONTRACT only:
- *   - no guest details page component (#197)
- *   - no guest details API (#198)
- *   - no App routing change / API wiring (#197/#200)
+ * Contracts used by GuestItemDetails UI (#197).
+ * Still out of scope here:
+ *   - guest details API (#198)
+ *   - App routing change / API wiring (#200)
  */
 
 import {
@@ -448,7 +448,7 @@ export function guestItemDetailsRestrictedAction(): GuestRestrictedAction {
   return 'request_rental';
 }
 
-/** Layout sections planned for #197 — no fabricated listing content. */
+/** Layout sections rendered by GuestItemDetails (#197) — no fabricated listing content. */
 export const GUEST_ITEM_DETAILS_LAYOUT_SECTIONS = [
   'back_navigation',
   'title',
