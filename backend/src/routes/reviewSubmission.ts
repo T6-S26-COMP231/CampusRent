@@ -3,15 +3,22 @@ import { authenticate, requireVerifiedStudent } from '../middleware/auth';
 import { nextId } from '../models/Counter';
 import { Listing } from '../models/Listing';
 import { RentalRequest } from '../models/RentalRequest';
-import { Review, toReviewListItem } from '../models/Review';
+import {
+  normalizeReviewComment,
+  normalizeReviewRating,
+  Review,
+  toReviewListItem,
+} from '../models/Review';
 import { User } from '../models/User';
 import { asyncHandler } from '../utils/asyncHandler';
 
 const router = Router();
 router.use(authenticate, requireVerifiedStudent);
 
+const DUPLICATE_REVIEW_ERROR = 'A review for this rental request already exists';
+
 /**
- * US-19.4 — create-review API.
+ * US-19.4 / US-19.5 — create-review API with business-rule enforcement.
  *
  * POST /api/reviews
  * Body: { rental_request_id, rating, comment }
@@ -20,10 +27,14 @@ router.use(authenticate, requireVerifiedStudent);
  * listing_id and reviewed_user_id are derived from the RentalRequest + Listing.
  * Client reviewer_id / listing_id / reviewed_user_id are ignored.
  *
+ * US-19.5 rules:
+ * - rental must be status === 'completed'
+ * - authenticated user must be RentalRequest.renter_id
+ * - one review per (reviewer, rental_request) — app check + unique index
+ * - rating whole number 1–5; comment required non-blank string (trimmed)
+ *
  * File name avoids backend/src/routes/reviews.ts, which Iteration 1 verify
  * still treats as a forbidden placeholder path.
- *
- * Full completed-rental / one-review / rating request-layer rules: US-19.5.
  */
 router.post(
   '/',
@@ -54,9 +65,43 @@ router.post(
       return res.status(400).json({ error: 'Invalid rental request id' });
     }
 
+    let normalizedRating;
+    let normalizedComment;
+    try {
+      normalizedRating = normalizeReviewRating(rating);
+      normalizedComment = normalizeReviewComment(comment);
+    } catch (error) {
+      return res.status(400).json({
+        error: error instanceof Error ? error.message : 'Invalid review input',
+      });
+    }
+
     const rentalRequest = await RentalRequest.findById(rentalRequestId);
     if (!rentalRequest) {
       return res.status(404).json({ error: 'Rental request not found' });
+    }
+
+    if (rentalRequest.status !== 'completed') {
+      return res.status(409).json({
+        error: 'Reviews are only available after a completed rental',
+      });
+    }
+
+    const reviewerId = req.user!.id;
+    if (rentalRequest.renter_id !== reviewerId) {
+      return res.status(403).json({
+        error: 'Only the renter for this completed rental may submit a review',
+      });
+    }
+
+    const existing = await Review.findOne({
+      reviewer_id: reviewerId,
+      rental_request_id: rentalRequestId,
+    })
+      .select('_id')
+      .lean();
+    if (existing) {
+      return res.status(409).json({ error: DUPLICATE_REVIEW_ERROR });
     }
 
     const listing = await Listing.findById(rentalRequest.listing_id).lean();
@@ -64,7 +109,6 @@ router.post(
       return res.status(404).json({ error: 'Listing not found' });
     }
 
-    const reviewerId = req.user!.id;
     const listingId = rentalRequest.listing_id;
     const reviewedUserId = listing.owner_id;
 
@@ -76,8 +120,8 @@ router.post(
         rental_request_id: rentalRequestId,
         listing_id: listingId,
         reviewed_user_id: reviewedUserId,
-        rating,
-        comment,
+        rating: normalizedRating,
+        comment: normalizedComment,
       });
     } catch (error) {
       if (
@@ -86,16 +130,14 @@ router.post(
       ) {
         return res.status(400).json({ error: error.message });
       }
-      // Unique index safeguard — full one-review application rules belong to US-19.5.
+      // Unique-index race — same controlled conflict as the application duplicate check.
       if (
         error &&
         typeof error === 'object' &&
         'code' in error &&
         (error as { code?: number }).code === 11000
       ) {
-        return res.status(409).json({
-          error: 'A review for this rental request already exists',
-        });
+        return res.status(409).json({ error: DUPLICATE_REVIEW_ERROR });
       }
       throw error;
     }

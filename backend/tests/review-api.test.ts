@@ -1,6 +1,6 @@
 /**
  * US-19.4 — create-review and list-review API endpoints.
- * Completed-rental / one-review / rating request-layer rules: US-19.5.
+ * US-19.5 — completed-rental, valid-reviewer, one-review, rating/comment rules.
  */
 import assert from 'node:assert/strict';
 import { after, before, beforeEach, describe, test } from 'node:test';
@@ -71,7 +71,12 @@ async function createListing(owner: number, title: string) {
 async function createRentalRequest(
   listing: number,
   renter: number,
-  status: 'pending' | 'accepted' | 'completed' = 'completed'
+  status:
+    | 'pending'
+    | 'accepted'
+    | 'declined'
+    | 'cancelled'
+    | 'completed' = 'completed'
 ) {
   const id = await nextId('rental_requests');
   await RentalRequest.create({
@@ -355,5 +360,216 @@ describe('US-19.4 list-review API (GET /api/listings/:id/reviews)', () => {
     assert.equal(listed.data[0].reviewer.id, renterId);
     assert.equal(listed.data[0].reviewer.label, `User #${renterId}`);
     assert.equal(listed.data[0].comment, 'Still visible after reviewer removal.');
+  });
+});
+
+describe('US-19.5 create-review business rules', () => {
+  test('completed rental allows review; non-completed statuses are rejected', async () => {
+    const token = studentToken(renterId, 'renter@mycentennialcollege.ca');
+
+    const completed = await api(baseUrl, 'POST', '/api/reviews', {
+      token,
+      body: {
+        rental_request_id: rentalRequestId,
+        rating: 5,
+        comment: 'Completed rental review.',
+      },
+    });
+    assert.equal(completed.status, 201);
+    assert.equal(await Review.countDocuments(), 1);
+
+    for (const status of ['pending', 'accepted', 'declined', 'cancelled'] as const) {
+      const requestId = await createRentalRequest(listingId, renterId, status);
+      const rejected = await api(baseUrl, 'POST', '/api/reviews', {
+        token,
+        body: {
+          rental_request_id: requestId,
+          rating: 4,
+          comment: `Should reject ${status}`,
+        },
+      });
+      assert.equal(rejected.status, 409, status);
+      assert.match(
+        String(rejected.data.error ?? ''),
+        /completed rental/i,
+        status
+      );
+    }
+    assert.equal(await Review.countDocuments(), 1);
+  });
+
+  test('only the renter may review; owner and unrelated student are rejected; spoofed reviewer_id ignored', async () => {
+    const ownerAttempt = await api(baseUrl, 'POST', '/api/reviews', {
+      token: studentToken(ownerId, 'owner@mycentennialcollege.ca'),
+      body: {
+        rental_request_id: rentalRequestId,
+        rating: 5,
+        comment: 'Owner should not review as renter.',
+        reviewer_id: renterId,
+      },
+    });
+    assert.equal(ownerAttempt.status, 403);
+    assert.match(String(ownerAttempt.data.error ?? ''), /renter/i);
+
+    const otherAttempt = await api(baseUrl, 'POST', '/api/reviews', {
+      token: studentToken(otherStudentId, 'other@mycentennialcollege.ca'),
+      body: {
+        rental_request_id: rentalRequestId,
+        rating: 5,
+        comment: 'Unrelated student.',
+        reviewer_id: renterId,
+      },
+    });
+    assert.equal(otherAttempt.status, 403);
+
+    const renterOk = await api(baseUrl, 'POST', '/api/reviews', {
+      token: studentToken(renterId, 'renter@mycentennialcollege.ca'),
+      body: {
+        rental_request_id: rentalRequestId,
+        rating: 4,
+        comment: 'Renter review succeeds.',
+        reviewer_id: otherStudentId,
+      },
+    });
+    assert.equal(renterOk.status, 201);
+    assert.equal(renterOk.data.reviewer.id, renterId);
+    assert.equal(await Review.countDocuments(), 1);
+  });
+
+  test('one review per completed transaction; second submission is 409', async () => {
+    const token = studentToken(renterId, 'renter@mycentennialcollege.ca');
+    const first = await api(baseUrl, 'POST', '/api/reviews', {
+      token,
+      body: {
+        rental_request_id: rentalRequestId,
+        rating: 5,
+        comment: 'First review.',
+      },
+    });
+    assert.equal(first.status, 201);
+
+    const second = await api(baseUrl, 'POST', '/api/reviews', {
+      token,
+      body: {
+        rental_request_id: rentalRequestId,
+        rating: 1,
+        comment: 'Duplicate attempt.',
+      },
+    });
+    assert.equal(second.status, 409);
+    assert.match(String(second.data.error ?? ''), /already exists/i);
+    assert.equal(await Review.countDocuments(), 1);
+
+    // Unique-index race path still returns the same controlled conflict.
+    await assert.rejects(
+      async () =>
+        Review.create({
+          _id: await nextId('reviews'),
+          reviewer_id: renterId,
+          rental_request_id: rentalRequestId,
+          listing_id: listingId,
+          reviewed_user_id: ownerId,
+          rating: 2,
+          comment: 'Direct duplicate insert.',
+        }),
+      (error: unknown) =>
+        Boolean(
+          error &&
+            typeof error === 'object' &&
+            'code' in error &&
+            (error as { code?: number }).code === 11000
+        )
+    );
+  });
+
+  test('rating must be whole number 1–5; string/decimal/missing rejected', async () => {
+    const token = studentToken(renterId, 'renter@mycentennialcollege.ca');
+
+    for (const rating of [1, 5] as const) {
+      const requestId = await createRentalRequest(listingId, renterId, 'completed');
+      const ok = await api(baseUrl, 'POST', '/api/reviews', {
+        token,
+        body: {
+          rental_request_id: requestId,
+          rating,
+          comment: `Rating ${rating}`,
+        },
+      });
+      assert.equal(ok.status, 201, String(rating));
+      assert.equal(ok.data.rating, rating);
+    }
+
+    const invalidRatings: unknown[] = [0, 6, 3.5, '5', NaN, undefined];
+    for (const rating of invalidRatings) {
+      const requestId = await createRentalRequest(listingId, renterId, 'completed');
+      const body: Record<string, unknown> = {
+        rental_request_id: requestId,
+        comment: 'Invalid rating case',
+      };
+      if (rating !== undefined) body.rating = rating;
+      const rejected = await api(baseUrl, 'POST', '/api/reviews', {
+        token,
+        body,
+      });
+      assert.equal(rejected.status, 400, String(rating));
+      assert.match(String(rejected.data.error ?? ''), /rating/i, String(rating));
+    }
+    assert.equal(await Review.countDocuments(), 2);
+  });
+
+  test('comment required, trimmed, rejects empty/whitespace/non-string', async () => {
+    const token = studentToken(renterId, 'renter@mycentennialcollege.ca');
+
+    const trimmed = await api(baseUrl, 'POST', '/api/reviews', {
+      token,
+      body: {
+        rental_request_id: rentalRequestId,
+        rating: 3,
+        comment: '  Normal comment.  ',
+      },
+    });
+    assert.equal(trimmed.status, 201);
+    assert.equal(trimmed.data.comment, 'Normal comment.');
+    const stored = await Review.findById(trimmed.data.id).lean();
+    assert.equal(stored?.comment, 'Normal comment.');
+
+    const invalidComments: unknown[] = [undefined, '', '   ', 42, null];
+    for (const comment of invalidComments) {
+      const requestId = await createRentalRequest(listingId, renterId, 'completed');
+      const body: Record<string, unknown> = {
+        rental_request_id: requestId,
+        rating: 4,
+      };
+      if (comment !== undefined) body.comment = comment;
+      const rejected = await api(baseUrl, 'POST', '/api/reviews', {
+        token,
+        body,
+      });
+      assert.equal(rejected.status, 400, String(comment));
+      assert.match(String(rejected.data.error ?? ''), /comment/i, String(comment));
+    }
+    assert.equal(await Review.countDocuments(), 1);
+  });
+
+  test('client listing_id and reviewed_user_id remain ignored; relationships stay derived', async () => {
+    const response = await api(baseUrl, 'POST', '/api/reviews', {
+      token: studentToken(renterId, 'renter@mycentennialcollege.ca'),
+      body: {
+        rental_request_id: rentalRequestId,
+        rating: 5,
+        comment: 'Trust boundary check.',
+        listing_id: otherListingId,
+        reviewed_user_id: otherStudentId,
+      },
+    });
+    assert.equal(response.status, 201);
+    assert.equal(response.data.listing_id, listingId);
+    assert.equal(response.data.reviewed_user_id, ownerId);
+    assert.notEqual(response.data.listing_id, otherListingId);
+    assert.notEqual(response.data.reviewed_user_id, otherStudentId);
+
+    const stored = await Review.findById(response.data.id).lean();
+    assert.equal(stored?.listing_id, listingId);
+    assert.equal(stored?.reviewed_user_id, ownerId);
   });
 });

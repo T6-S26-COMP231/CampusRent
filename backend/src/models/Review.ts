@@ -17,7 +17,7 @@ import mongoose, { Schema } from 'mongoose';
  *
  * One review per (reviewer_id, rental_request_id) via unique compound index.
  * Create/list endpoints: US-19.4. Completed-rental / one-review / rating
- * request-layer enforcement: US-19.5.
+ * request-layer enforcement: US-19.5 (POST /api/reviews).
  */
 
 export const STAR_RATING_MIN = 1;
@@ -44,19 +44,24 @@ function assertPositiveInteger(value: unknown, field: string): number {
   return numeric;
 }
 
-/** Whole-number 1–5 only — rejects decimals, 0, and values above 5. */
+/**
+ * Whole-number 1–5 only.
+ * Rejects missing values, decimals, 0, >5, NaN, and non-number types (e.g. "5").
+ */
 export function normalizeReviewRating(raw: unknown): StarRating {
-  if (raw == null || raw === '') {
+  if (raw === undefined || raw === null) {
     throw new Error('Rating is required');
   }
-  const numeric = typeof raw === 'number' ? raw : Number(raw);
-  if (!Number.isFinite(numeric) || !Number.isInteger(numeric)) {
+  if (typeof raw !== 'number' || Number.isNaN(raw)) {
     throw new Error('Rating must be a whole number from 1 to 5');
   }
-  if (numeric < STAR_RATING_MIN || numeric > STAR_RATING_MAX) {
+  if (!Number.isInteger(raw)) {
     throw new Error('Rating must be a whole number from 1 to 5');
   }
-  return numeric as StarRating;
+  if (raw < STAR_RATING_MIN || raw > STAR_RATING_MAX) {
+    throw new Error('Rating must be a whole number from 1 to 5');
+  }
+  return raw as StarRating;
 }
 
 export function isWholeStarRating(value: unknown): value is StarRating {
@@ -123,7 +128,7 @@ const reviewSchema = new Schema<ReviewDoc>(
 
 /**
  * One review per reviewing student per completed rental transaction.
- * Application duplicate handling belongs to US-19.5; this is the DB safeguard.
+ * Application duplicate check is in POST /api/reviews; this is the DB safeguard.
  */
 reviewSchema.index(
   { reviewer_id: 1, rental_request_id: 1 },

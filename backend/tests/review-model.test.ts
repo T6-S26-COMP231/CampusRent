@@ -177,6 +177,8 @@ describe('US-19.3 Review model persistence', () => {
     assert.throws(() => normalizeReviewRating(6), /1 to 5/i);
     assert.throws(() => normalizeReviewRating(2.5), /whole number/i);
     assert.throws(() => normalizeReviewRating(null), /required/i);
+    assert.throws(() => normalizeReviewRating('5'), /whole number/i);
+    assert.throws(() => normalizeReviewRating(Number.NaN), /whole number/i);
 
     await assert.rejects(
       () => createValidReview({ rental_request_id: 103, rating: 0 }),
