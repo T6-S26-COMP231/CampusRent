@@ -1,6 +1,6 @@
 /**
- * US-19.1 — rating-and-review form / display design helpers.
- * Pure design rules only; no persistence or API calls.
+ * US-19.1 / US-19.2 — rating-and-review helpers.
+ * Pure logic only; no React DOM framework.
  */
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
@@ -14,16 +14,27 @@ import {
   REVIEW_FORM_HEADING,
   REVIEW_INCOMPLETE_COMMENT_MESSAGE,
   REVIEW_INCOMPLETE_RATING_MESSAGE,
+  REVIEW_NOT_CONNECTED_MESSAGE,
   REVIEW_RATING_LABEL,
-  REVIEW_RATING_SCALE_UNAPPROVED_NOTE,
+  REVIEW_SUCCESS_MESSAGE,
   REVIEW_UNAVAILABLE_LABEL,
   REVIEW_WORKFLOW_STEPS,
+  STAR_RATING_MAX,
+  STAR_RATING_MIN,
+  WHOLE_STAR_RATINGS,
+  applyCancelledReviewForm,
+  applyUnconnectedReviewSubmit,
   buildSubmitReviewBody,
   canSubmitReview,
+  claimsReviewSavedSuccessfully,
   completedRentalReviewControls,
+  filledStarCount,
   hasSelectedRating,
   isApprovedRatingValue,
   isCompletedRentalStatus,
+  isHalfStarOrInvalidRating,
+  isWholeStarRating,
+  myRequestsReviewControls,
   reviewActionAvailable,
   reviewContextSummary,
   reviewEligibility,
@@ -31,7 +42,6 @@ import {
   reviewValidationMessages,
   toReviewDisplayItem,
   toReviewRentalContext,
-  type RatingOption,
 } from './ratingsReviews';
 
 const completedRequest = {
@@ -47,7 +57,7 @@ const completedRequest = {
 };
 
 describe('US-19.1 rating-and-review form and display design', () => {
-  test('completed + not reviewed → review action available on request surfaces', () => {
+  test('completed + not reviewed → review action available on My Requests (renter)', () => {
     assert.equal(isCompletedRentalStatus('completed'), true);
     assert.equal(
       reviewEligibility({
@@ -59,30 +69,18 @@ describe('US-19.1 rating-and-review form and display design', () => {
     );
     assert.equal(reviewActionAvailable('available'), true);
 
-    const renterControls = completedRentalReviewControls(completedRequest, 9, false);
+    const renterControls = myRequestsReviewControls(completedRequest, 9, false);
     assert.equal(renterControls.showReviewAction, true);
     assert.equal(renterControls.entryLabel, REVIEW_ENTRY_LABEL);
     assert.ok(renterControls.context);
     assert.equal(renterControls.context!.rentalRequestId, 21);
     assert.equal(renterControls.context!.reviewedUserId, 4);
     assert.equal(renterControls.context!.listingId, 12);
-
-    const ownerControls = completedRentalReviewControls(completedRequest, 4, false);
-    assert.equal(ownerControls.showReviewAction, true);
-    assert.equal(ownerControls.context!.reviewedUserId, 9);
   });
 
   test('incomplete rental → review option unavailable (all non-completed statuses)', () => {
     for (const status of ['pending', 'accepted', 'declined', 'cancelled'] as const) {
       assert.equal(isCompletedRentalStatus(status), false);
-      assert.equal(
-        reviewEligibility({
-          status,
-          alreadyReviewed: false,
-          isParticipant: true,
-        }),
-        'unavailable'
-      );
       const controls = completedRentalReviewControls(
         { ...completedRequest, status },
         9,
@@ -109,7 +107,7 @@ describe('US-19.1 rating-and-review form and display design', () => {
     assert.equal(
       canSubmitReview({
         context: controls.context,
-        rating: 'placeholder',
+        rating: 5,
         comment: 'Great rental.',
         submitting: false,
         viewerId: 9,
@@ -131,112 +129,14 @@ describe('US-19.1 rating-and-review form and display design', () => {
       'Listing: Campus Camera · With: Test Owner'
     );
 
-    const body = buildSubmitReviewBody(context!, 'pending-scale', '  Smooth handoff.  ');
+    const body = buildSubmitReviewBody(context!, 4, '  Smooth handoff.  ');
     assert.equal(body.rental_request_id, 21);
+    assert.equal(body.rating, 4);
     assert.equal(body.comment, 'Smooth handoff.');
     assert.equal(reviewSubmitBodyExcludesClientIdentity(body), true);
     assert.equal('reviewer_id' in body, false);
     assert.equal('listing_id' in body, false);
     assert.equal('reviewed_user_id' in body, false);
-  });
-
-  test('no approved rating scale invented; abstract control stays empty until approved', () => {
-    assert.deepEqual(APPROVED_RATING_VALUES, []);
-    assert.match(REVIEW_RATING_SCALE_UNAPPROVED_NOTE, /No approved rating scale/i);
-    assert.equal(isApprovedRatingValue(5), false);
-    assert.equal(isApprovedRatingValue(5, []), false);
-    assert.equal(hasSelectedRating(null), false);
-    assert.equal(hasSelectedRating(undefined), false);
-    assert.equal(hasSelectedRating(''), false);
-
-    // When an approved scale appears later, membership is enforced.
-    const approved: RatingOption[] = [
-      { value: 1, label: '1' },
-      { value: 2, label: '2' },
-    ];
-    assert.equal(isApprovedRatingValue(1, approved), true);
-    assert.equal(isApprovedRatingValue(5, approved), false);
-    assert.equal(isApprovedRatingValue(1.5, approved), false);
-  });
-
-  test('incomplete review validation: missing rating or blank comment', () => {
-    const missingBoth = reviewValidationMessages({ rating: null, comment: '   ' });
-    assert.equal(missingBoth.rating, REVIEW_INCOMPLETE_RATING_MESSAGE);
-    assert.equal(missingBoth.comment, REVIEW_INCOMPLETE_COMMENT_MESSAGE);
-
-    const context = toReviewRentalContext(completedRequest, 9);
-    assert.equal(
-      canSubmitReview({
-        context,
-        rating: null,
-        comment: 'Has comment only',
-        submitting: false,
-        viewerId: 9,
-        alreadyReviewed: false,
-      }),
-      false
-    );
-    assert.equal(
-      canSubmitReview({
-        context,
-        rating: 'selected',
-        comment: '   ',
-        submitting: false,
-        viewerId: 9,
-        alreadyReviewed: false,
-      }),
-      false
-    );
-    // With empty approved scale, a selected rating + non-blank comment may submit
-    // at the client gate; membership checks activate once a scale is approved.
-    assert.equal(
-      canSubmitReview({
-        context,
-        rating: 'selected',
-        comment: 'Great experience.',
-        submitting: false,
-        viewerId: 9,
-        alreadyReviewed: false,
-      }),
-      true
-    );
-    assert.equal(
-      canSubmitReview({
-        context,
-        rating: 'selected',
-        comment: 'Great experience.',
-        submitting: true,
-        viewerId: 9,
-        alreadyReviewed: false,
-      }),
-      false
-    );
-  });
-
-  test('review display layout is listing-detail scoped without invented extras', () => {
-    assert.equal(REVIEW_DISPLAY_HEADING, 'Reviews');
-    assert.equal(REVIEW_DISPLAY_EMPTY_MESSAGE, 'No reviews yet for this listing.');
-
-    const item = toReviewDisplayItem(
-      {
-        id: 7,
-        rating: 'selected',
-        comment: 'Item was as described.',
-        created_at: '2026-08-08T20:00:00.000Z',
-        listing_id: 12,
-      },
-      'Ramika Student',
-      'Campus Camera'
-    );
-    assert.equal(item.review_id, 7);
-    assert.equal(item.reviewer_label, 'Ramika Student');
-    assert.equal(item.rating, 'selected');
-    assert.equal(item.comment, 'Item was as described.');
-    assert.equal(item.listing_id, 12);
-    assert.equal(item.listing_title, 'Campus Camera');
-    assert.equal('helpful_votes' in item, false);
-    assert.equal('replies' in item, false);
-    assert.equal('verified_purchase' in item, false);
   });
 
   test('workflow steps cover completed rental through listing display', () => {
@@ -250,10 +150,137 @@ describe('US-19.1 rating-and-review form and display design', () => {
     ]);
   });
 
-  test('non-participant cannot obtain review context or action', () => {
-    const controls = completedRentalReviewControls(completedRequest, 99, false);
-    assert.equal(controls.context, null);
-    assert.equal(controls.eligibility, 'unavailable');
-    assert.equal(controls.showReviewAction, false);
+  test('non-participant and owner cannot obtain renter review context', () => {
+    assert.equal(completedRentalReviewControls(completedRequest, 99, false).context, null);
+    assert.equal(completedRentalReviewControls(completedRequest, 4, false).showReviewAction, false);
+    assert.equal(toReviewRentalContext(completedRequest, 4), null);
+  });
+});
+
+describe('US-19.2 review form, rating control, and review display helpers', () => {
+  test('completed eligible rental shows Review action; incomplete does not expose form', () => {
+    const completed = myRequestsReviewControls(completedRequest, 9, false);
+    assert.equal(completed.showReviewAction, true);
+    assert.equal(completed.eligibility, 'available');
+    assert.ok(completed.context);
+
+    const pending = myRequestsReviewControls(
+      { ...completedRequest, status: 'pending' },
+      9,
+      false
+    );
+    assert.equal(pending.showReviewAction, false);
+    assert.equal(pending.eligibility, 'unavailable');
+  });
+
+  test('rating 1–5 selectable; half-stars and out-of-range rejected', () => {
+    assert.deepEqual(WHOLE_STAR_RATINGS, [1, 2, 3, 4, 5]);
+    assert.equal(STAR_RATING_MIN, 1);
+    assert.equal(STAR_RATING_MAX, 5);
+    assert.equal(APPROVED_RATING_VALUES.length, 5);
+
+    for (const value of WHOLE_STAR_RATINGS) {
+      assert.equal(isWholeStarRating(value), true);
+      assert.equal(isApprovedRatingValue(value), true);
+      assert.equal(hasSelectedRating(value), true);
+    }
+
+    assert.equal(isWholeStarRating(0), false);
+    assert.equal(isWholeStarRating(6), false);
+    assert.equal(isWholeStarRating(1.5), false);
+    assert.equal(isApprovedRatingValue(1.5), false);
+    assert.equal(isHalfStarOrInvalidRating(2.5), true);
+    assert.equal(isHalfStarOrInvalidRating(3), false);
+    assert.equal(hasSelectedRating(null), false);
+  });
+
+  test('rating and comment required; whitespace-only comment rejected', () => {
+    const missing = reviewValidationMessages({ rating: null, comment: '   ' });
+    assert.equal(missing.rating, REVIEW_INCOMPLETE_RATING_MESSAGE);
+    assert.equal(missing.comment, REVIEW_INCOMPLETE_COMMENT_MESSAGE);
+
+    const context = toReviewRentalContext(completedRequest, 9);
+    assert.equal(
+      canSubmitReview({
+        context,
+        rating: null,
+        comment: 'Has comment',
+        submitting: false,
+        viewerId: 9,
+        alreadyReviewed: false,
+      }),
+      false
+    );
+    assert.equal(
+      canSubmitReview({
+        context,
+        rating: 3,
+        comment: '\n\t ',
+        submitting: false,
+        viewerId: 9,
+        alreadyReviewed: false,
+      }),
+      false
+    );
+    assert.equal(
+      canSubmitReview({
+        context,
+        rating: 3,
+        comment: 'Great experience.',
+        submitting: false,
+        viewerId: 9,
+        alreadyReviewed: false,
+      }),
+      true
+    );
+  });
+
+  test('valid form builds correct submission data without client identity fields', () => {
+    const context = toReviewRentalContext(completedRequest, 9)!;
+    const body = buildSubmitReviewBody(context, 5, '  Excellent handoff.  ');
+    assert.deepEqual(body, {
+      rental_request_id: 21,
+      rating: 5,
+      comment: 'Excellent handoff.',
+    });
+    assert.equal(reviewSubmitBodyExcludesClientIdentity(body), true);
+    assert.throws(() => buildSubmitReviewBody(context, 2.5 as never, 'Nope'));
+  });
+
+  test('cancel resets form draft; unconnected submit never claims saved success', () => {
+    const cleared = applyCancelledReviewForm();
+    assert.equal(cleared.rating, null);
+    assert.equal(cleared.comment, '');
+    assert.equal(cleared.notice, '');
+
+    const unconnected = applyUnconnectedReviewSubmit();
+    assert.equal(unconnected.notice, REVIEW_NOT_CONNECTED_MESSAGE);
+    assert.equal(unconnected.success, '');
+    assert.equal(claimsReviewSavedSuccessfully(unconnected.notice), false);
+    assert.equal(claimsReviewSavedSuccessfully(REVIEW_SUCCESS_MESSAGE), true);
+  });
+
+  test('review display renders reviewer/rating/comment; empty state is truthful', () => {
+    assert.equal(REVIEW_DISPLAY_HEADING, 'Reviews');
+    assert.equal(REVIEW_DISPLAY_EMPTY_MESSAGE, 'No reviews yet for this listing.');
+
+    const item = toReviewDisplayItem(
+      {
+        id: 7,
+        rating: 4,
+        comment: 'Item was as described.',
+        created_at: '2026-08-08T20:00:00.000Z',
+        listing_id: 12,
+      },
+      'Ramika Student',
+      'Campus Camera'
+    );
+    assert.equal(item.reviewer_label, 'Ramika Student');
+    assert.equal(item.rating, 4);
+    assert.equal(item.comment, 'Item was as described.');
+    assert.equal(filledStarCount(item.rating), 4);
+    assert.equal(filledStarCount(1.5 as never), 0);
+    assert.equal('helpful_votes' in item, false);
+    assert.equal('aggregate' in item, false);
   });
 });

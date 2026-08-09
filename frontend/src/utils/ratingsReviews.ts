@@ -1,64 +1,31 @@
 /**
- * US-19.1 — rating-and-review form and display layout design.
+ * US-19.1 / US-19.2 — rating-and-review form and display helpers.
  *
  * TAC: registered students leave ratings and reviews after a completed rental
  * so they can contribute feedback to the CampusRent community.
  *
- * Entry points (prefer existing completed-rental surfaces — US-19.2 wires UI):
+ * Entry point for US-19.2 UI (smallest story-satisfying surface):
  *
- *   Primary — My Requests (/my-requests)
- *     Renter’s completed RentalRequest cards already track past rentals and
- *     are linked from ListingDetailPage when status is completed.
- *
- *   Secondary — Incoming Requests (/requests)
- *     Listing owner’s completed request cards (owners may also mark complete).
- *
- *   Do not invent a standalone /reviews route for submission.
- *   Inline panel on the request card (same pattern as ReportContentForm /
- *   Mark Completed confirms), not a new navigation area.
+ *   My Requests (/my-requests) — renter’s completed RentalRequest cards.
+ *   Inline ReviewForm panel (same pattern as ReportContentForm / confirms).
+ *   Owner-side Incoming Requests is not wired in #162 to avoid inventing
+ *   bidirectional review rules before the story clarifies direction.
  *
  * Conceptual flow:
  *   Completed rental → Review option available → open form
- *   → rating + written review → submit → review appears on listing detail
+ *   → rating + written review → submit (API in US-19.4/19.6)
+ *   → review appears on ListingDetailPage Reviews section
  *
- * Incomplete rental:
- *   Review action unavailable in the UI (do not show the form and reject later).
+ * Incomplete rental: Review action unavailable.
+ * Already reviewed: “Review submitted” — no second form (API later supplies truth).
  *
- * Already reviewed (one review per completed transaction per reviewing student):
- *   Review action unavailable; show “already submitted” state instead of a second form.
+ * Rating scale (team implementation decision documented on GitHub #162):
+ *   1–5 whole-number stars, required, no half-stars.
+ *   This is a CampusRent team decision for implementation — not an instructor TAC scale.
  *
- * Form layout (US-19.2 ReviewForm):
- *   1. Heading — “Leave a review”
- *   2. Context summary — listing title + counterpart name + rental dates (read-only)
- *   3. Rating — required discrete control (scale TBD — see APPROVED_RATING_VALUES)
- *   4. Written review — required <textarea className="input-field">
- *   5. Actions — Submit (btn-primary) + Cancel (btn-secondary)
+ * Written review: required, trimmed, non-empty. No min/max/profanity/anonymous rules.
  *
- * Trust model:
- *   - rental_request_id, listing_id, reviewed_user_id come from the completed
- *     request context (never typed by the reviewer)
- *   - reviewer identity comes from authentication later (US-19.4/19.6) —
- *     never from a user-editable form field
- *
- * Rating scale:
- *   TAC confirms ratings are supported but does not specify 1–5 (or any scale).
- *   Repository / GitHub #160 / #161 / planning docs have no approved scale.
- *   Do NOT invent 1–5, half-stars, 10-point, emojis, or likes here.
- *   Rating control is abstract; concrete options are supplied when an approved
- *   source exists (same pattern as REPORT_REASON_OPTIONS for US-20).
- *
- * Written review:
- *   Required, trimmed, non-empty. No min/max length, profanity, edit/delete,
- *   or anonymous-review rules are approved — do not invent them.
- *
- * Display (US-19.2):
- *   ListingDetailPage — compact “Reviews” section under listing content.
- *   Smallest community surface: feedback about the listing from completed
- *   rentals. Each row shows reviewer display name, rating, comment, and
- *   created time when persisted. No helpful votes, replies, badges, or
- *   aggregate formulas unless later approved.
- *
- * Persistence / APIs belong to US-19.3–19.6 — not this design task.
+ * Persistence / APIs belong to US-19.3–19.6.
  */
 
 export const REVIEW_FORM_HEADING = 'Leave a review';
@@ -72,15 +39,35 @@ export const REVIEW_RATING_LABEL = 'Rating';
 export const REVIEW_COMMENT_LABEL = 'Written review';
 export const REVIEW_COMMENT_PLACEHOLDER =
   'Share your experience with this completed rental…';
+/** Only after a real backend save (US-19.6). Do not show from the UI-only form. */
 export const REVIEW_SUCCESS_MESSAGE = 'Review submitted successfully.';
+export const REVIEW_NOT_CONNECTED_MESSAGE = 'Review submission is not connected yet.';
 export const REVIEW_INCOMPLETE_RATING_MESSAGE = 'A rating is required.';
 export const REVIEW_INCOMPLETE_COMMENT_MESSAGE = 'A written review is required.';
 export const REVIEW_DISPLAY_HEADING = 'Reviews';
 export const REVIEW_DISPLAY_EMPTY_MESSAGE = 'No reviews yet for this listing.';
-export const REVIEW_RATING_SCALE_UNAPPROVED_NOTE =
-  'No approved rating scale is defined yet; rating options remain unset until an approved requirement exists.';
 
-/** RentalRequest statuses relevant to review eligibility. */
+/** Team decision (#162): whole-number stars from 1 through 5. */
+export const STAR_RATING_MIN = 1;
+export const STAR_RATING_MAX = 5;
+export const WHOLE_STAR_RATINGS = [1, 2, 3, 4, 5] as const;
+export type StarRating = (typeof WHOLE_STAR_RATINGS)[number];
+export type RatingValue = StarRating;
+
+export interface RatingOption {
+  value: StarRating;
+  label: string;
+}
+
+/**
+ * Team-approved discrete rating options for the form control (GitHub #162).
+ * Whole numbers 1–5 only — no half-stars, 0, or values above 5.
+ */
+export const APPROVED_RATING_VALUES: RatingOption[] = WHOLE_STAR_RATINGS.map((value) => ({
+  value,
+  label: String(value),
+}));
+
 export type ReviewableRequestStatus =
   | 'pending'
   | 'accepted'
@@ -88,43 +75,17 @@ export type ReviewableRequestStatus =
   | 'cancelled'
   | 'completed';
 
-/**
- * UI eligibility for the Review action on a request card.
- * - available: completed + this student has not reviewed yet
- * - already_reviewed: completed + this student already submitted a review
- * - unavailable: rental is not completed (or viewer is not a participant)
- */
 export type ReviewEligibilityState = 'available' | 'already_reviewed' | 'unavailable';
 
 /**
- * Rating value type is intentionally unconstrained until an approved scale exists.
- * Later tasks replace this with the concrete approved domain (e.g. integer steps).
- */
-export type RatingValue = string | number;
-
-/** Option shape for the future rating control (value + display label). */
-export interface RatingOption {
-  value: RatingValue;
-  label: string;
-}
-
-/**
- * Approved discrete rating options for the form control.
- * Intentionally empty — no approved scale exists in TAC/GitHub/repo.
- * US-19.2+ supplies options from an approved source when one is available.
- * Do not treat emptiness as “free-text rating”.
- */
-export const APPROVED_RATING_VALUES: RatingOption[] = [];
-
-/**
  * Trusted completed-rental context for opening the review form.
- * Ids come from My Requests / Incoming Requests page state only.
+ * Ids come from My Requests page state only (renter flow for US-19.2).
  */
 export interface ReviewRentalContext {
   rentalRequestId: number;
   listingId: number;
   listingTitle: string;
-  /** Counterpart on the rental (owner for renter; renter for owner). */
+  /** Listing owner — counterpart for the reviewing renter. */
   reviewedUserId: number;
   reviewedUserName: string;
   startDate: string;
@@ -133,17 +94,7 @@ export interface ReviewRentalContext {
 }
 
 /**
- * Conceptual later Review document fields needed for the story.
- * Not a Mongo schema — US-19.3 owns Review.ts.
- *
- * Required relationships:
- *   - reviewer_id — authenticated student (server-derived)
- *   - rental_request_id — completed transaction (one review per reviewer+request)
- *   - listing_id — listing associated with that request (display + community context)
- *   - reviewed_user_id — rental counterpart derived from the request
- *   - rating — approved discrete value (scale TBD)
- *   - comment — written review text
- *   - created_at — persistence timestamp for display
+ * Conceptual later Review document fields (US-19.3 owns Review.ts).
  */
 export interface ReviewRecordShape {
   id: number;
@@ -151,7 +102,7 @@ export interface ReviewRecordShape {
   rental_request_id: number;
   listing_id: number;
   reviewed_user_id: number;
-  rating: RatingValue;
+  rating: StarRating;
   comment: string;
   created_at: string;
 }
@@ -159,15 +110,14 @@ export interface ReviewRecordShape {
 /** Conceptual POST body for later create-review API — no reviewer_id. */
 export interface SubmitReviewBody {
   rental_request_id: number;
-  rating: RatingValue;
+  rating: StarRating;
   comment: string;
 }
 
-/** Display row for ListingDetailPage reviews section. */
 export interface ReviewDisplayItem {
   review_id: number;
   reviewer_label: string;
-  rating: RatingValue;
+  rating: StarRating;
   comment: string;
   created_at: string;
   listing_id: number;
@@ -180,9 +130,20 @@ export interface ReviewSubmitGate {
   comment: string;
   submitting: boolean;
   viewerId: number | string | undefined;
-  /** True when this viewer already has a review for the rental_request_id. */
   alreadyReviewed: boolean;
 }
+
+export type EnrichedRentalRequestLike = {
+  id: number | string;
+  listing_id: number | string;
+  renter_id: number | string;
+  start_date: string;
+  end_date: string;
+  status: string;
+  listing?: { id?: number | string; title?: string } | null;
+  owner?: { id?: number | string; first_name?: string; last_name?: string } | null;
+  renter?: { id?: number | string; first_name?: string; last_name?: string } | null;
+};
 
 export function toPositiveIntId(value: unknown): number | null {
   if (typeof value === 'boolean' || value === null || value === undefined || value === '') {
@@ -203,24 +164,33 @@ export function isCompletedRentalStatus(status: string | undefined | null): bool
   return status === 'completed';
 }
 
-/**
- * Hook for later UI once an approved rating scale exists.
- * Returns false when the approved list is empty or the value is not listed.
- */
+/** True only for whole-number values in 1..5 (no halves, 0, or >5). */
+export function isWholeStarRating(value: unknown): value is StarRating {
+  return (
+    typeof value === 'number' &&
+    Number.isInteger(value) &&
+    value >= STAR_RATING_MIN &&
+    value <= STAR_RATING_MAX
+  );
+}
+
 export function isApprovedRatingValue(
   rating: RatingValue | null | undefined,
   approved: readonly RatingOption[] = APPROVED_RATING_VALUES
 ): boolean {
-  if (rating === null || rating === undefined || rating === '') return false;
+  if (!isWholeStarRating(rating)) return false;
   if (!approved.length) return false;
   return approved.some((option) => option.value === rating);
 }
 
-/** Presence check only — not membership in an invented scale. */
 export function hasSelectedRating(rating: RatingValue | null | undefined): boolean {
-  if (rating === null || rating === undefined) return false;
-  if (typeof rating === 'string') return rating.trim().length > 0;
-  return typeof rating === 'number' && Number.isFinite(rating);
+  return isApprovedRatingValue(rating);
+}
+
+/** Reject half-stars and other non-members of the 1–5 whole-star set. */
+export function isHalfStarOrInvalidRating(value: unknown): boolean {
+  if (typeof value === 'number' && !Number.isInteger(value)) return true;
+  return !isWholeStarRating(value) && value !== null && value !== undefined && value !== '';
 }
 
 export function normalizeReviewComment(raw: string): string {
@@ -232,21 +202,11 @@ export function isBlankReviewComment(raw: string): boolean {
 }
 
 /**
- * Build trusted review context from an enriched RentalRequest row.
- * Counterpart is the other participant — never typed by the reviewer.
+ * Build trusted review context for the reviewing renter only (US-19.2).
+ * Owner-side review entry is not enabled here.
  */
 export function toReviewRentalContext(
-  request: {
-    id: number | string;
-    listing_id: number | string;
-    renter_id: number | string;
-    start_date: string;
-    end_date: string;
-    status: string;
-    listing?: { id?: number | string; title?: string } | null;
-    owner?: { id?: number | string; first_name?: string; last_name?: string } | null;
-    renter?: { id?: number | string; first_name?: string; last_name?: string } | null;
-  },
+  request: EnrichedRentalRequestLike,
   viewerId: number | string | undefined
 ): ReviewRentalContext | null {
   const viewer = toPositiveIntId(viewerId);
@@ -259,47 +219,42 @@ export function toReviewRentalContext(
     return null;
   }
 
-  const isRenter = viewer === renterId;
-  const isOwner = ownerId != null && viewer === ownerId;
-  if (!isRenter && !isOwner) return null;
+  // US-19.2: renter-side My Requests only — do not open owner review here.
+  if (viewer !== renterId) return null;
+  if (ownerId == null) return null;
 
-  let reviewedUserId: number | null;
-  let reviewedUserName: string;
-  if (isRenter) {
-    reviewedUserId = ownerId;
-    reviewedUserName = request.owner
-      ? `${request.owner.first_name ?? ''} ${request.owner.last_name ?? ''}`.trim()
-      : '';
-  } else {
-    reviewedUserId = renterId;
-    reviewedUserName = request.renter
-      ? `${request.renter.first_name ?? ''} ${request.renter.last_name ?? ''}`.trim()
-      : '';
-  }
-
-  if (reviewedUserId == null) return null;
+  const reviewedUserName = request.owner
+    ? `${request.owner.first_name ?? ''} ${request.owner.last_name ?? ''}`.trim()
+    : '';
 
   return {
     rentalRequestId: requestId,
     listingId,
     listingTitle: request.listing?.title?.trim() || 'Untitled listing',
-    reviewedUserId,
-    reviewedUserName: reviewedUserName || `User #${reviewedUserId}`,
+    reviewedUserId: ownerId,
+    reviewedUserName: reviewedUserName || `User #${ownerId}`,
     startDate: request.start_date,
     endDate: request.end_date,
     status: request.status as ReviewableRequestStatus,
   };
 }
 
-/** Read-only summary above the form controls. */
 export function reviewContextSummary(context: ReviewRentalContext): string {
   return `Listing: ${context.listingTitle} · With: ${context.reviewedUserName}`;
 }
 
-/**
- * Eligibility for showing the Review action.
- * Incomplete rentals never reach “available”.
- */
+export function reviewDateRangeSummary(context: ReviewRentalContext): string {
+  const start = formatReviewDate(context.startDate);
+  const end = formatReviewDate(context.endDate);
+  return `${start} – ${end}`;
+}
+
+function formatReviewDate(isoOrDate: string): string {
+  const parsed = Date.parse(isoOrDate);
+  if (Number.isNaN(parsed)) return isoOrDate;
+  return new Date(parsed).toLocaleDateString();
+}
+
 export function reviewEligibility(options: {
   status: string | undefined | null;
   alreadyReviewed: boolean;
@@ -322,11 +277,11 @@ export function reviewEntryLabel(state: ReviewEligibilityState): string {
 }
 
 /**
- * My Requests / Incoming Requests card controls for US-19.2.
- * Incomplete → hide Review; completed+reviewed → label only; completed → show action.
+ * My Requests card controls (renter completed rentals).
+ * Incomplete → no action; completed+reviewed → label only; completed → show Review.
  */
 export function completedRentalReviewControls(
-  request: Parameters<typeof toReviewRentalContext>[0],
+  request: EnrichedRentalRequestLike,
   viewerId: number | string | undefined,
   alreadyReviewed: boolean
 ): {
@@ -349,20 +304,18 @@ export function completedRentalReviewControls(
   };
 }
 
+/** Alias used by MyRequestsPage — same renter-only rules. */
+export const myRequestsReviewControls = completedRentalReviewControls;
+
 export function reviewValidationMessages(
   gate: Pick<ReviewSubmitGate, 'rating' | 'comment'>
 ): { rating: string; comment: string } {
   return {
-    rating: hasSelectedRating(gate.rating) ? '' : REVIEW_INCOMPLETE_RATING_MESSAGE,
+    rating: isApprovedRatingValue(gate.rating) ? '' : REVIEW_INCOMPLETE_RATING_MESSAGE,
     comment: isBlankReviewComment(gate.comment) ? REVIEW_INCOMPLETE_COMMENT_MESSAGE : '',
   };
 }
 
-/**
- * Client gate before any future network call.
- * Incomplete rentals, already-reviewed, blank fields, and double-submit are blocked.
- * When an approved scale exists, rating must be a member of that scale.
- */
 export function canSubmitReview(gate: ReviewSubmitGate): boolean {
   if (gate.submitting) return false;
   if (!gate.context) return false;
@@ -374,12 +327,13 @@ export function canSubmitReview(gate: ReviewSubmitGate): boolean {
 
   const messages = reviewValidationMessages(gate);
   if (messages.rating || messages.comment) return false;
-
-  if (APPROVED_RATING_VALUES.length > 0 && !isApprovedRatingValue(gate.rating)) {
-    return false;
-  }
+  if (!isApprovedRatingValue(gate.rating)) return false;
 
   return true;
+}
+
+export function reviewSubmitLabel(submitting: boolean): string {
+  return submitting ? SUBMITTING_REVIEW_LABEL : SUBMIT_REVIEW_LABEL;
 }
 
 /** Pure request descriptor — no reviewer_id / listing_id / reviewed_user_id. */
@@ -388,6 +342,9 @@ export function buildSubmitReviewBody(
   rating: RatingValue,
   comment: string
 ): SubmitReviewBody {
+  if (!isWholeStarRating(rating)) {
+    throw new Error('Rating must be a whole number from 1 to 5');
+  }
   return {
     rental_request_id: context.rentalRequestId,
     rating,
@@ -408,7 +365,6 @@ export function reviewSubmitBodyExcludesClientIdentity(body: SubmitReviewBody): 
   );
 }
 
-/** Map a persisted review (+ reviewer label) into the listing display row. */
 export function toReviewDisplayItem(
   review: Pick<
     ReviewRecordShape,
@@ -417,10 +373,11 @@ export function toReviewDisplayItem(
   reviewerLabel: string,
   listingTitle?: string
 ): ReviewDisplayItem {
+  const rating = isWholeStarRating(review.rating) ? review.rating : STAR_RATING_MIN;
   return {
     review_id: review.id,
     reviewer_label: reviewerLabel.trim() || 'CampusRent student',
-    rating: review.rating,
+    rating,
     comment: review.comment,
     created_at: review.created_at,
     listing_id: review.listing_id,
@@ -438,10 +395,42 @@ export function formatReviewTimestamp(iso: string): string {
   return new Date(parsed).toLocaleString();
 }
 
+/** Whole filled stars for display (1–5); never fractional. */
+export function filledStarCount(rating: RatingValue | null | undefined): number {
+  return isWholeStarRating(rating) ? rating : 0;
+}
+
+export function ratingAriaLabel(rating: StarRating): string {
+  return `${rating} out of ${STAR_RATING_MAX} stars`;
+}
+
+export function applyCancelledReviewForm(): {
+  rating: StarRating | null;
+  comment: string;
+  error: string;
+  notice: string;
+} {
+  return { rating: null, comment: '', error: '', notice: '' };
+}
+
 /**
- * Workflow steps for later implementation tasks (documentation helper).
- * Not an executable pipeline.
+ * UI-only submit path before US-19.6 API wiring.
+ * Never claims the review was saved on the server.
  */
+export function applyUnconnectedReviewSubmit(): {
+  notice: string;
+  success: string;
+} {
+  return {
+    notice: REVIEW_NOT_CONNECTED_MESSAGE,
+    success: '',
+  };
+}
+
+export function claimsReviewSavedSuccessfully(message: string): boolean {
+  return /saved successfully|submitted successfully/i.test(message);
+}
+
 export const REVIEW_WORKFLOW_STEPS = [
   'completed_rental_visible',
   'review_action_available',

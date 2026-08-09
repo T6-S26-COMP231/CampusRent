@@ -1,11 +1,16 @@
 import { useEffect, useState } from 'react';
-import { CheckCircle2, ClipboardList, XCircle } from 'lucide-react';
+import { CheckCircle2, ClipboardList, Star, XCircle } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { api, RentalRequest } from '../api/client';
 import ConversationStartedNotice from '../components/ConversationStartedNotice';
+import ReviewForm from '../components/ReviewForm';
 import StartConversationButton from '../components/StartConversationButton';
 import StatusBadge from '../components/StatusBadge';
 import { useAuth } from '../context/AuthContext';
+import {
+  REVIEW_ALREADY_SUBMITTED_LABEL,
+  myRequestsReviewControls,
+} from '../utils/ratingsReviews';
 import { ConversationTarget } from '../utils/startConversation';
 
 function ownerTargetForRequest(request: RentalRequest): ConversationTarget | null {
@@ -32,6 +37,8 @@ export default function MyRequestsPage() {
   const [completingId, setCompletingId] = useState<number | null>(null);
   const [confirmCancelId, setConfirmCancelId] = useState<number | null>(null);
   const [confirmCompleteId, setConfirmCompleteId] = useState<number | null>(null);
+  /** Inline review form for a completed rental; already-reviewed truth comes later from API. */
+  const [reviewRequestId, setReviewRequestId] = useState<number | null>(null);
 
   const loadRequests = () => {
     setLoading(true);
@@ -128,13 +135,18 @@ export default function MyRequestsPage() {
         </div>
       ) : (
         <div className="mt-8 space-y-4">
-          {requests.map((request) => (
+          {requests.map((request) => {
+            // alreadyReviewed stays false until list-review API can prove a prior review.
+            const reviewControls = myRequestsReviewControls(request, user?.id, false);
+            const reviewOpen = reviewRequestId === request.id && reviewControls.context != null;
+
+            return (
             <article
               key={request.id}
               className="card transition hover:-translate-y-0.5 hover:shadow-card-hover"
             >
               <div className="flex flex-col justify-between gap-5 sm:flex-row sm:items-start">
-                <div>
+                <div className="min-w-0 flex-1">
                   <div className="flex flex-wrap items-center gap-3">
                     <h2 className="font-display text-lg font-bold text-slate-900">
                       {request.listing?.title || 'Listing unavailable'}
@@ -163,6 +175,15 @@ export default function MyRequestsPage() {
                       {new Date(request.end_date).toLocaleDateString()}
                     </p>
                   </div>
+
+                  {reviewOpen && reviewControls.context && (
+                    <ReviewForm
+                      context={reviewControls.context}
+                      viewerId={user?.id}
+                      alreadyReviewed={false}
+                      onCancel={() => setReviewRequestId(null)}
+                    />
+                  )}
 
                   {confirmCancelId === request.id && (
                     <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
@@ -221,7 +242,9 @@ export default function MyRequestsPage() {
                   )}
                 </div>
 
-                {confirmCancelId !== request.id && confirmCompleteId !== request.id && (
+                {confirmCancelId !== request.id &&
+                  confirmCompleteId !== request.id &&
+                  !reviewOpen && (
                   <div className="flex shrink-0 flex-col gap-2 sm:items-stretch">
                     <StartConversationButton
                       viewerId={user?.id}
@@ -249,6 +272,7 @@ export default function MyRequestsPage() {
                           setError('');
                           setMessage('');
                           setConfirmCompleteId(null);
+                          setReviewRequestId(null);
                           setConfirmCancelId(request.id);
                         }}
                         className="btn-secondary"
@@ -266,6 +290,7 @@ export default function MyRequestsPage() {
                           setError('');
                           setMessage('');
                           setConfirmCancelId(null);
+                          setReviewRequestId(null);
                           setConfirmCompleteId(request.id);
                         }}
                         className="btn-primary"
@@ -275,11 +300,36 @@ export default function MyRequestsPage() {
                         Mark Completed
                       </button>
                     )}
+
+                    {reviewControls.showReviewAction && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setError('');
+                          setMessage('');
+                          setConfirmCancelId(null);
+                          setConfirmCompleteId(null);
+                          setReviewRequestId(request.id);
+                        }}
+                        className="btn-secondary"
+                        disabled={busyId === request.id}
+                      >
+                        <Star className="h-4 w-4" />
+                        {reviewControls.entryLabel}
+                      </button>
+                    )}
+
+                    {reviewControls.eligibility === 'already_reviewed' && (
+                      <p className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-center text-xs font-medium text-slate-500">
+                        {REVIEW_ALREADY_SUBMITTED_LABEL}
+                      </p>
+                    )}
                   </div>
                 )}
               </div>
             </article>
-          ))}
+            );
+          })}
         </div>
       )}
     </div>

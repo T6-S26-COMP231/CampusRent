@@ -11,6 +11,7 @@ import {
 import { api, assetUrl, Listing, RentalRequest } from '../api/client';
 import { useAuth } from '../context/AuthContext';
 import ConversationStartedNotice from '../components/ConversationStartedNotice';
+import ListingReviews from '../components/ListingReviews';
 import ReportContentForm from '../components/ReportContentForm';
 import StartConversationButton from '../components/StartConversationButton';
 import StatusBadge from '../components/StatusBadge';
@@ -173,6 +174,9 @@ export default function ListingDetailPage() {
           </div>
 
           <p className="mt-5 text-base leading-7 text-slate-600">{listing.description}</p>
+
+          {/* Reviews load from API in US-19.6 — never fabricate production reviews. */}
+          <ListingReviews reviews={[]} />
 
           {listing.rental_terms && (
             <div className="mt-6 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
