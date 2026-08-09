@@ -10,6 +10,10 @@ import {
   type GuestCatalogueFilters,
   type GuestListingsResponse,
 } from '../utils/guestCatalogue';
+import {
+  buildGuestItemDetailsApiPath,
+  type GuestItemDetailsResponse,
+} from '../utils/guestItemDetails';
 
 const API_BASE = import.meta.env.VITE_API_URL
   ? `${import.meta.env.VITE_API_URL}/api`
@@ -264,6 +268,14 @@ export const api = {
     filters: GuestCatalogueFilters = defaultGuestCatalogueFilters()
   ): Promise<GuestListingsResponse> =>
     request<GuestListingsResponse>(buildGuestListingsPath(filters)),
+
+  /**
+   * US-02.5 — public guest basic item details.
+   * GET /api/guest/listings/:id — no auth required or manufactured.
+   * Does not call or weaken registered GET /api/listings/:id.
+   */
+  getGuestListingDetails: (listingId: number): Promise<GuestItemDetailsResponse> =>
+    request<GuestItemDetailsResponse>(buildGuestItemDetailsApiPath(listingId)),
 };
 
 export interface User {

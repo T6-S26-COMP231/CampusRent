@@ -30,9 +30,8 @@
  *   Later US-02 tasks open guest basic details on that path without making
  *   the registered full-details API public. #198 owns GET /api/guest/listings/:id.
  *
- * Contracts used by GuestItemDetails UI (#197) and privacy/status hardening (#199).
- * Still out of scope here:
- *   - App routing change / API wiring (#200)
+ * Contracts used by GuestItemDetails UI (#197), privacy/status hardening (#199),
+ * and guest details ↔ GET /api/guest/listings/:id wiring (#200).
  */
 
 import {
@@ -504,6 +503,117 @@ export function guestItemDetailsUiStatus(options: {
   if (options.error) return 'error';
   if (!options.hasDetails) return 'not_found';
   return 'ready';
+}
+
+export type GuestItemDetailsFetchResult = {
+  called: boolean;
+  status: Exclude<GuestItemDetailsUiStatus, 'loading'>;
+  details: GuestItemDetails | null;
+  error: string;
+  notFound: boolean;
+};
+
+/**
+ * Resolve which /listings/:id experience to render after auth settles.
+ * Wait for auth loading before choosing — avoid guest/verified flicker.
+ */
+export function resolveListingDetailsRouteAudience(options: {
+  authLoading?: boolean;
+  isAdmin?: boolean;
+  isVerified?: boolean;
+  hasUser?: boolean;
+}): {
+  ready: boolean;
+  experience: ListingDetailsExperience | 'auth_loading' | 'pending_account';
+} {
+  if (options.authLoading) {
+    return { ready: false, experience: 'auth_loading' };
+  }
+  if (options.isAdmin) {
+    return { ready: true, experience: 'admin_redirect' };
+  }
+  if (options.isVerified) {
+    return { ready: true, experience: 'registered_full_details_us10' };
+  }
+  if (options.hasUser) {
+    return { ready: true, experience: 'pending_account' };
+  }
+  return { ready: true, experience: 'guest_basic_details_us02' };
+}
+
+function statusFromError(err: unknown): number {
+  if (
+    err &&
+    typeof err === 'object' &&
+    'status' in err &&
+    typeof (err as { status: unknown }).status === 'number'
+  ) {
+    return (err as { status: number }).status;
+  }
+  return 0;
+}
+
+/**
+ * Guest details load flow against GET /api/guest/listings/:id.
+ * Maps through the allow-list only; never fabricates listing rows.
+ */
+export async function runGuestItemDetailsFetchFlow(
+  fetchDetails: (listingId: number) => Promise<GuestItemDetailsResponse | unknown>,
+  listingIdParam: unknown
+): Promise<GuestItemDetailsFetchResult> {
+  const parsed = parseGuestItemDetailsIdParam(listingIdParam);
+  if (parsed.id == null) {
+    return {
+      called: false,
+      status: 'not_found',
+      details: null,
+      error: '',
+      notFound: true,
+    };
+  }
+
+  try {
+    const response = await fetchDetails(parsed.id);
+    const details = mapGuestItemDetailsFromApi(response);
+    if (!details) {
+      return {
+        called: true,
+        status: 'error',
+        details: null,
+        error: GUEST_ITEM_DETAILS_LOAD_ERROR_FALLBACK,
+        notFound: false,
+      };
+    }
+    return {
+      called: true,
+      status: 'ready',
+      details,
+      error: '',
+      notFound: false,
+    };
+  } catch (err) {
+    const status = statusFromError(err);
+    if (status === 404) {
+      return {
+        called: true,
+        status: 'not_found',
+        details: null,
+        error: '',
+        notFound: true,
+      };
+    }
+    const message =
+      err instanceof Error && err.message.trim()
+        ? err.message
+        : GUEST_ITEM_DETAILS_LOAD_ERROR_FALLBACK;
+    return {
+      called: true,
+      status: 'error',
+      details: null,
+      error: message,
+      notFound: false,
+    };
+  }
 }
 
 /**
