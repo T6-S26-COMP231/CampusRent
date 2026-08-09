@@ -3,7 +3,7 @@ import { useAuth } from './context/AuthContext';
 import Layout from './components/Layout';
 import HomePage from './pages/HomePage';
 import BrowsePage from './pages/BrowsePage';
-import ListingDetailPage from './pages/ListingDetailPage';
+import ListingDetailsRoute from './pages/ListingDetailsRoute';
 import LoginPage from './pages/LoginPage';
 import RegisterPage from './pages/RegisterPage';
 import AccountPage from './pages/AccountPage';
@@ -65,18 +65,13 @@ export default function App() {
         <Route index element={<HomePage />} />
         {/*
           US-01.2 — /browse is open so guests can use GuestCatalogue.
-          BrowsePage still routes verified students to the registered catalogue
-          and keeps listing details / rental flows behind requireVerifiedStudent.
+          BrowsePage still routes verified students to the registered catalogue.
+          US-02.5 — /listings/:id chooses guest basic details vs US-10 full details
+          after auth resolves (ListingDetailsRoute). Edit/create/rental routes stay
+          behind requireVerifiedStudent.
         */}
         <Route path="browse" element={<BrowsePage />} />
-        <Route
-          path="listings/:id"
-          element={
-            <ProtectedRoute requireVerifiedStudent>
-              <ListingDetailPage />
-            </ProtectedRoute>
-          }
-        />
+        <Route path="listings/:id" element={<ListingDetailsRoute />} />
         <Route
           path="login"
           element={

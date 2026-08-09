@@ -283,6 +283,7 @@ describe('US-01.1 registration prompt and audience boundary', () => {
     const source = readFileSync(join(here, 'guestCatalogue.ts'), 'utf8');
     assert.match(source, /US-02/);
     assert.match(source, /do not implement/i);
+    assert.match(source, /guestItemDetails\.ts/);
 
     // No seeded/hard-coded preview catalogue data in the design module.
     assert.equal(source.includes('Users: 125'), false);
