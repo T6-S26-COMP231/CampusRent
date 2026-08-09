@@ -1,4 +1,4 @@
-import { FormEvent, useState } from 'react';
+import { FormEvent, useMemo, useState } from 'react';
 import { BarChart3, FileText, Filter, LoaderCircle } from 'lucide-react';
 import {
   ACTIVITY_DASHBOARD_DESCRIPTION,
@@ -27,28 +27,31 @@ import {
   attemptActivityReportGenerationUi,
   defaultActivityFilters,
   formatActivityFilterSummary,
+  getVisibleMetricRows,
   type ActivityListingCategory,
   type ActivityMetricRow,
   type ActivityReport,
   type ActivityReportFilters,
   type ActivityScope,
 } from '../utils/activityMetrics';
+import ActivityMetricWidget from './ActivityMetricWidget';
+import ActivityReportResult from './ActivityReportResult';
 
 export interface ActivityDashboardProps {
-  /** When provided by later tasks, real metric rows render instead of placeholders. */
+  /** Supplied metric rows from later integration — never fabricated here. */
   metricRows?: ActivityMetricRow[] | null;
   loading?: boolean;
   error?: string;
   /** Show the approved no-data presentation (has_data === false). */
   showNoData?: boolean;
-  /** Connected report from later tasks — never fabricated in US-24.2. */
+  /** Connected report from later tasks — never fabricated here. */
   report?: ActivityReport | null;
   initialFilters?: ActivityReportFilters;
 }
 
 /**
- * US-24.2 — administrator activity-monitoring dashboard layout.
- * Structure only: no aggregation API, no working filters, no fabricated counts.
+ * US-24.2 / US-24.3 — administrator activity-monitoring dashboard.
+ * Layout + metric/report widgets. No aggregation API or report generation.
  */
 export default function ActivityDashboard({
   metricRows = null,
@@ -60,6 +63,14 @@ export default function ActivityDashboard({
 }: ActivityDashboardProps) {
   const [filters, setFilters] = useState<ActivityReportFilters>(initialFilters);
   const [reportNotice, setReportNotice] = useState('');
+
+  const visibleRows = useMemo(
+    () =>
+      metricRows
+        ? getVisibleMetricRows(filters.activity_scope, metricRows)
+        : [],
+    [filters.activity_scope, metricRows]
+  );
 
   const status = activityDashboardUiStatus({
     loading,
@@ -84,7 +95,7 @@ export default function ActivityDashboard({
 
   const handleGenerateReport = (event: FormEvent) => {
     event.preventDefault();
-    // US-24.2 boundary — do not claim a report was generated.
+    // Still unconnected — do not fabricate a report.
     const result = attemptActivityReportGenerationUi();
     setReportNotice(result.notice);
   };
@@ -108,7 +119,6 @@ export default function ActivityDashboard({
         </div>
       </div>
 
-      {/* Filters — local presentation state only; does not update statistics. */}
       <div className="card mt-6" aria-label={ACTIVITY_FILTERS_HEADING}>
         <div className="flex items-center gap-2">
           <Filter className="h-4 w-4 text-campus-700" />
@@ -208,7 +218,6 @@ export default function ActivityDashboard({
         </div>
       </div>
 
-      {/* Loading / error slots for later integration */}
       {status === 'loading' && (
         <div
           className="mt-6 space-y-4"
@@ -248,30 +257,29 @@ export default function ActivityDashboard({
         </div>
       )}
 
-      {/* Platform statistics + metric grid — structural placeholders, no fake counts */}
       {status !== 'loading' && !noData.visible && (
         <div className="mt-8" aria-label={ACTIVITY_STATISTICS_HEADING}>
           <h3 className="font-display text-lg font-bold text-slate-900">
             {ACTIVITY_STATISTICS_HEADING}
           </h3>
           <p className="mt-1 text-sm text-slate-500">{ACTIVITY_METRICS_HEADING}</p>
-          <p className="mt-1 text-xs text-slate-400">{ACTIVITY_METRICS_PLACEHOLDER_HINT}</p>
+          {status !== 'ready' && (
+            <p className="mt-1 text-xs text-slate-400">{ACTIVITY_METRICS_PLACEHOLDER_HINT}</p>
+          )}
 
           <div
             className="mt-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-3"
             aria-label={ACTIVITY_METRICS_HEADING}
             data-testid="activity-metric-grid"
           >
-            {status === 'ready' && metricRows
-              ? metricRows.map((row) => (
-                  <article key={row.key} className="card !p-4">
-                    <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">
-                      {row.label}
-                    </p>
-                    <p className="mt-2 font-display text-2xl font-bold text-slate-900">
-                      {row.count}
-                    </p>
-                  </article>
+            {status === 'ready'
+              ? visibleRows.map((row) => (
+                  <ActivityMetricWidget
+                    key={row.key}
+                    metricKey={row.key}
+                    label={row.label}
+                    count={row.count}
+                  />
                 ))
               : layoutSlots.map((slot) => (
                   <article
@@ -291,7 +299,6 @@ export default function ActivityDashboard({
         </div>
       )}
 
-      {/* Report generation area — action represented, not connected */}
       <div className="card mt-8" aria-label={ACTIVITY_REPORT_HEADING}>
         <div className="flex items-center gap-2">
           <FileText className="h-4 w-4 text-campus-700" />
@@ -321,17 +328,16 @@ export default function ActivityDashboard({
           </div>
         )}
 
-        <div
-          className="mt-5 rounded-2xl border border-dashed border-slate-200 bg-slate-50/80 p-5"
-          data-testid="activity-report-result"
-        >
+        <div className="mt-5">
           {report ? (
-            <p className="text-sm text-slate-700">
-              Summary total: {report.summary_total}
-              {report.no_data_message ? ` — ${report.no_data_message}` : ''}
-            </p>
+            <ActivityReportResult report={report} />
           ) : (
-            <p className="text-sm text-slate-500">{ACTIVITY_REPORT_RESULT_PLACEHOLDER}</p>
+            <div
+              className="rounded-2xl border border-dashed border-slate-200 bg-slate-50/80 p-5"
+              data-testid="activity-report-result"
+            >
+              <p className="text-sm text-slate-500">{ACTIVITY_REPORT_RESULT_PLACEHOLDER}</p>
+            </div>
           )}
         </div>
       </div>

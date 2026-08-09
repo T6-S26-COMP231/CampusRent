@@ -36,8 +36,9 @@
  * Date filter: created_at on each collection (no fabricated resolved_at).
  *
  * US-24.2 adds layout/presentation helpers for AdminPage ActivityDashboard.
- * Still no aggregation API, real metric counts, working filters, or report
- * generation — those belong to later US-24 tasks.
+ * US-24.3 adds metric/report widget presentation helpers (display props only).
+ * Still no aggregation API, working server filters, or frontend/backend
+ * integration — those belong to later US-24 tasks.
  */
 
 /** Same listing categories enforced by backend validation. */
@@ -385,6 +386,95 @@ export function activityLayoutDisplaysFabricatedCounts(
     }
     return /^\d+$/.test(trimmed);
   });
+}
+
+/**
+ * US-24.3 — filter supplied metric rows for the selected activity scope.
+ * Display-only: never fetches or invents counts.
+ */
+export function getVisibleMetricRows(
+  scope: ActivityScope,
+  rows: readonly ActivityMetricRow[]
+): ActivityMetricRow[] {
+  const allowed = new Set(metricsForScope(scope));
+  return rows.filter(
+    (row) =>
+      isActivityMetricKey(row.key) &&
+      allowed.has(row.key) &&
+      typeof row.label === 'string' &&
+      typeof row.count === 'number' &&
+      Number.isFinite(row.count)
+  );
+}
+
+/** Normalize a single metric widget's display props (including zero). */
+export function activityMetricWidgetView(input: {
+  key: ActivityMetricKey;
+  label: string;
+  count: number;
+}): {
+  key: ActivityMetricKey;
+  label: string;
+  count: number;
+  countText: string;
+} {
+  const count = Number.isFinite(input.count) ? input.count : 0;
+  return {
+    key: input.key,
+    label: input.label,
+    count,
+    countText: String(count),
+  };
+}
+
+/**
+ * US-24.3 — safe report-result presentation from a supplied ActivityReport.
+ * Uses the report's summary_total as-is (never recomputed from breakdown rows).
+ */
+export function activityReportResultView(report: ActivityReport): {
+  generated_at: string;
+  filter_summary: string;
+  metrics: ActivityMetricRow[];
+  summary_total: number;
+  has_data: boolean;
+  no_data_message: string | null;
+  show_no_data: boolean;
+} {
+  const show_no_data = report.has_data === false;
+  return {
+    generated_at: report.generated_at,
+    filter_summary: formatActivityFilterSummary(report.filters),
+    metrics: report.metrics.map((row) => ({
+      key: row.key,
+      label: row.label,
+      count: row.count,
+    })),
+    summary_total: report.summary_total,
+    has_data: report.has_data,
+    no_data_message: show_no_data
+      ? report.no_data_message || ACTIVITY_NO_DATA_MESSAGE
+      : null,
+    show_no_data,
+  };
+}
+
+/** Display the supplied summary_total — never recompute from metric rows. */
+export function activityReportSummaryTotalForDisplay(
+  report: ActivityReport
+): number {
+  return report.summary_total;
+}
+
+/** Blind sum of all metric rows (including breakdowns) — for negative tests only. */
+export function activityReportBlindMetricRowSum(report: ActivityReport): number {
+  return report.metrics.reduce((sum, row) => sum + row.count, 0);
+}
+
+/** Display contract must never expose aggregate-monitoring forbidden fields. */
+export function activityWidgetDisplayContainsSensitiveField(
+  value: unknown
+): boolean {
+  return activityReportContainsSensitiveField(value);
 }
 
 const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
