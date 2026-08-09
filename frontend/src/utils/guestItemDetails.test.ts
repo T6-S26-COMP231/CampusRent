@@ -258,11 +258,9 @@ describe('US-02.1 unavailable status, rental prompt, and audience boundary', () 
     });
     assert.notEqual(buildGuestItemDetailsApiPath(12), '/listings/12');
 
-    // Design task must not open the registered details route or invent UI/API.
-    assert.match(
-      appSource,
-      /path="listings\/:id"[\s\S]*?requireVerifiedStudent/
-    );
+    // Shared /listings/:id path; audience selection belongs to ListingDetailsRoute.
+    assert.ok(appSource.includes('path="listings/:id"'));
+    assert.ok(appSource.includes('ListingDetailsRoute'));
     assert.ok(listingDetailSource.includes('listing.owner'));
     assert.ok(listingDetailSource.includes('listing.rental_terms'));
     assert.ok(listingDetailSource.includes("api.post<RentalRequest>('/requests'"));
