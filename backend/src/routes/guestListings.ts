@@ -1,10 +1,12 @@
 /**
  * US-01.3 / US-01.4 — public limited guest listing previews.
+ * US-02.3 — public guest basic item details.
  *
  * GET /api/guest/listings — no authenticate / requireVerifiedStudent.
- * Responses use the guest allow-list serializer only.
+ * GET /api/guest/listings/:id — no authenticate / requireVerifiedStudent.
+ * Responses use dedicated guest allow-list serializers only.
  * Does not weaken /api/listings or other registered-student routes.
- * Does not implement US-02 guest item details.
+ * Frontend guest details wiring belongs to #200.
  */
 import { Router } from 'express';
 import { Listing } from '../models/Listing';
@@ -13,6 +15,7 @@ import {
   buildGuestListingFilter,
   toGuestListingPreview,
 } from '../utils/guestListingPreview';
+import { toGuestItemDetails } from '../utils/guestItemDetails';
 
 const router = Router();
 
@@ -32,6 +35,29 @@ router.get(
     // Allow-list construction per row — never formatListing.
     return res.status(200).json({
       listings: listings.map((listing) => toGuestListingPreview(listing)),
+    });
+  })
+);
+
+router.get(
+  '/:id',
+  asyncHandler(async (req, res) => {
+    const listingId = Number(req.params.id);
+    if (!Number.isInteger(listingId) || listingId <= 0) {
+      return res.status(400).json({ error: 'Invalid listing id' });
+    }
+
+    // Load only fields needed for the guest details allow-list — never owner.
+    const listing = await Listing.findById(listingId)
+      .select('_id title category description availability')
+      .lean();
+    if (!listing) {
+      return res.status(404).json({ error: 'Listing not found' });
+    }
+
+    // Allow-list construction — never formatListing.
+    return res.status(200).json({
+      listing: toGuestItemDetails(listing),
     });
   })
 );
