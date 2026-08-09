@@ -1,7 +1,10 @@
 import { useEffect, useState } from 'react';
+import { Navigate } from 'react-router-dom';
 import { ChevronLeft, ChevronRight, Filter, Search } from 'lucide-react';
 import { api, Listing } from '../api/client';
+import GuestCatalogue from '../components/GuestCatalogue';
 import ListingCard from '../components/ListingCard';
+import { useAuth } from '../context/AuthContext';
 
 interface ListingResponse {
   listings: Listing[];
@@ -13,7 +16,38 @@ interface ListingResponse {
   };
 }
 
+/**
+ * Catalogue entry at /browse.
+ * Guests see GuestCatalogue wired to GET /api/guest/listings (US-01.5).
+ * Verified students keep the existing US-08/US-09 registered /api/listings browse.
+ */
 export default function BrowsePage() {
+  const { user, loading: authLoading, isVerified, isAdmin } = useAuth();
+
+  if (authLoading) {
+    return (
+      <div className="flex min-h-[50vh] items-center justify-center">
+        <div className="h-9 w-9 animate-spin rounded-full border-4 border-campus-200 border-t-campus-600" />
+      </div>
+    );
+  }
+
+  if (isAdmin) {
+    return <Navigate to="/admin" replace />;
+  }
+
+  if (isVerified) {
+    return <VerifiedStudentBrowsePage />;
+  }
+
+  if (user) {
+    return <Navigate to="/account" replace />;
+  }
+
+  return <GuestCatalogue />;
+}
+
+function VerifiedStudentBrowsePage() {
   const [listings, setListings] = useState<Listing[]>([]);
   const [categories, setCategories] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
@@ -77,7 +111,7 @@ export default function BrowsePage() {
   };
 
   return (
-    <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6">
+    <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6" data-testid="verified-student-browse">
       <div className="mb-8">
         <p className="text-sm font-semibold uppercase tracking-[0.2em] text-campus-600">Item discovery</p>
         <h1 className="mt-2 font-display text-3xl font-bold text-slate-900">Browse Listings</h1>

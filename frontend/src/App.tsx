@@ -63,14 +63,12 @@ export default function App() {
     <Routes>
       <Route element={<Layout />}>
         <Route index element={<HomePage />} />
-        <Route
-          path="browse"
-          element={
-            <ProtectedRoute requireVerifiedStudent>
-              <BrowsePage />
-            </ProtectedRoute>
-          }
-        />
+        {/*
+          US-01.2 — /browse is open so guests can use GuestCatalogue.
+          BrowsePage still routes verified students to the registered catalogue
+          and keeps listing details / rental flows behind requireVerifiedStudent.
+        */}
+        <Route path="browse" element={<BrowsePage />} />
         <Route
           path="listings/:id"
           element={

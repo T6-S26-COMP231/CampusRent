@@ -53,6 +53,11 @@ export default function Layout() {
           </Link>
 
           <nav className="hidden items-center gap-1 md:flex">
+            {!user && (
+              <NavLink to="/browse" className={navLinkClass}>
+                <Search className="h-4 w-4" /> Browse
+              </NavLink>
+            )}
             {isVerified && (
               <>
                 <NavLink to="/browse" className={navLinkClass}>
@@ -113,6 +118,9 @@ export default function Layout() {
         {mobileOpen && (
           <div className="border-t border-slate-100 bg-white px-4 py-3 md:hidden">
             <nav className="flex flex-col gap-1">
+              {!user && (
+                <NavLink to="/browse" className={navLinkClass} onClick={closeMobile}>Browse</NavLink>
+              )}
               {isVerified && (
                 <>
                   <NavLink to="/browse" className={navLinkClass} onClick={closeMobile}>Browse</NavLink>

@@ -5,6 +5,7 @@ import multer from 'multer';
 import mongoose from 'mongoose';
 import authRoutes from './routes/auth';
 import listingRoutes from './routes/listings';
+import guestListingRoutes from './routes/guestListings';
 import requestRoutes from './routes/requests';
 import conversationRoutes from './routes/conversations';
 import reportSubmissionRoutes from './routes/reportSubmission';
@@ -50,6 +51,8 @@ export function createApp() {
 
   app.use('/api/auth', authRoutes);
   app.use('/api/listings', listingRoutes);
+  // US-01.3 — public limited guest previews (no auth). Keep separate from /api/listings.
+  app.use('/api/guest/listings', guestListingRoutes);
   app.use('/api/requests', requestRoutes);
   app.use('/api/conversations', conversationRoutes);
   app.use('/api/reports', reportSubmissionRoutes);
