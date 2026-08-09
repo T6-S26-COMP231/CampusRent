@@ -2,9 +2,7 @@
  * US-24.2 — administrator activity-dashboard layout / presentation helpers.
  * Pure logic only; no React DOM framework.
  *
- * ActivityDashboard on AdminPage (/admin) is layout-only in this task:
- * filters do not update statistics, Generate report is not connected, and
- * no fabricated metric counts are shown.
+ * Layout sections remain on /admin; US-24.6 wires live API integration.
  */
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -21,10 +19,10 @@ import {
   ACTIVITY_LISTING_CATEGORIES,
   ACTIVITY_LISTING_CATEGORY_FILTER_LABEL,
   ACTIVITY_METRICS_HEADING,
+  ACTIVITY_APPLY_FILTERS_LABEL,
   ACTIVITY_METRICS_PLACEHOLDER_LABEL,
   ACTIVITY_NO_DATA_MESSAGE,
   ACTIVITY_REPORT_HEADING,
-  ACTIVITY_REPORT_NOT_CONNECTED_MESSAGE,
   ACTIVITY_SCOPE_FILTER_LABEL,
   ACTIVITY_SCOPE_LABELS,
   ACTIVITY_SCOPES,
@@ -37,7 +35,6 @@ import {
   activityMetricLayoutSlots,
   activityNoDataPresentation,
   activityScopeSelectOptions,
-  attemptActivityReportGenerationUi,
   defaultActivityFilters,
   formatActivityFilterSummary,
 } from './activityMetrics';
@@ -114,7 +111,8 @@ describe('US-24.2 activity dashboard layout', () => {
     assert.ok(activityDashboardSource.includes('ACTIVITY_STATISTICS_HEADING'));
     assert.ok(activityDashboardSource.includes('ACTIVITY_REPORT_HEADING'));
     assert.ok(activityDashboardSource.includes('ACTIVITY_GENERATE_REPORT_LABEL'));
-    assert.ok(activityDashboardSource.includes('ACTIVITY_METRICS_PLACEHOLDER_LABEL'));
+    assert.ok(activityDashboardSource.includes('ACTIVITY_APPLY_FILTERS_LABEL'));
+    assert.equal(ACTIVITY_APPLY_FILTERS_LABEL, 'Apply filters');
 
     const slots = activityMetricLayoutSlots('listings');
     assert.deepEqual(
@@ -156,17 +154,15 @@ describe('US-24.2 activity dashboard layout', () => {
     assert.equal(activityDashboardUiStatus({ error: 'fail' }), 'error');
   });
 
-  test('Generate report action is represented but not integrated', () => {
-    const result = attemptActivityReportGenerationUi();
-    assert.equal(result.report, null);
-    assert.equal(result.success, '');
-    assert.equal(result.notice, ACTIVITY_REPORT_NOT_CONNECTED_MESSAGE);
-    assert.ok(activityDashboardSource.includes('attemptActivityReportGenerationUi'));
-    assert.ok(
-      activityDashboardSource.includes('Activity report generation is not connected yet') ||
-        activityDashboardSource.includes('ACTIVITY_REPORT_NOT_CONNECTED_MESSAGE') ||
-        activityDashboardSource.includes('reportNotice')
+  test('Generate report and Apply filters actions are present for API integration', () => {
+    assert.ok(activityDashboardSource.includes('ACTIVITY_GENERATE_REPORT_LABEL'));
+    assert.ok(activityDashboardSource.includes('ACTIVITY_APPLY_FILTERS_LABEL'));
+    assert.ok(activityDashboardSource.includes('getAdminActivity') || activityDashboardSource.includes('fetchActivity'));
+    assert.equal(
+      activityDashboardSource.includes('Activity report generation is not connected yet'),
+      false
     );
+    assert.equal(activityDashboardSource.includes('Awaiting statistics'), false);
 
     const summary = formatActivityFilterSummary(defaultActivityFilters());
     assert.match(summary, /All activity/);

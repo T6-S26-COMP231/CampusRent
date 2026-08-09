@@ -21,7 +21,7 @@ import {
 
 /**
  * System Administration Team dashboard.
- * US-22 verification + US-23.6 moderation + US-24.2 activity-monitoring layout.
+ * US-22 verification + US-23.6 moderation + US-24.6 activity monitoring API.
  */
 export default function AdminPage() {
   const [pendingUsers, setPendingUsers] = useState<User[]>([]);
@@ -260,7 +260,7 @@ export default function AdminPage() {
         />
       </div>
 
-      {/* US-24.2 — layout only; metrics/filters/report generation connect in later tasks. */}
+      {/* US-24.6 — live platform activity from GET /api/admin/activity. */}
       <ActivityDashboard />
     </div>
   );

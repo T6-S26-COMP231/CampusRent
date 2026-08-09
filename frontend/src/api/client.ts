@@ -1,3 +1,10 @@
+import {
+  buildAdminActivityPath,
+  defaultActivityFilters,
+  type ActivityReport,
+  type ActivityReportFilters,
+} from '../utils/activityMetrics';
+
 const API_BASE = import.meta.env.VITE_API_URL
   ? `${import.meta.env.VITE_API_URL}/api`
   : '/api';
@@ -230,6 +237,16 @@ export const api = {
       method: 'PATCH',
       body: JSON.stringify(body),
     }),
+
+  /**
+   * US-24.6 — administrator platform activity aggregate / activity summary.
+   * GET /api/admin/activity with optional start_date, end_date, activity_scope,
+   * listing_category. Only set filters are included in the query string.
+   */
+  getAdminActivity: (
+    filters: ActivityReportFilters = defaultActivityFilters()
+  ): Promise<ActivityReport> =>
+    request<ActivityReport>(buildAdminActivityPath(filters)),
 };
 
 export interface User {

@@ -1,33 +1,46 @@
-import { FormEvent, useMemo, useState } from 'react';
-import { BarChart3, FileText, Filter, LoaderCircle } from 'lucide-react';
 import {
+  FormEvent,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
+import { BarChart3, FileText, Filter, LoaderCircle } from 'lucide-react';
+import { api } from '../api/client';
+import {
+  ACTIVITY_APPLY_FILTERS_LABEL,
   ACTIVITY_DASHBOARD_DESCRIPTION,
   ACTIVITY_DASHBOARD_HEADING,
   ACTIVITY_END_DATE_LABEL,
   ACTIVITY_FILTERS_HEADING,
   ACTIVITY_FILTERS_HINT,
+  ACTIVITY_GENERATE_ERROR_FALLBACK,
   ACTIVITY_GENERATE_REPORT_LABEL,
+  ACTIVITY_GENERATING_REPORT_LABEL,
   ACTIVITY_LISTING_CATEGORY_FILTER_LABEL,
+  ACTIVITY_LOAD_ERROR_FALLBACK,
   ACTIVITY_LOADING_LABEL,
   ACTIVITY_METRICS_HEADING,
-  ACTIVITY_METRICS_PLACEHOLDER_HINT,
-  ACTIVITY_METRICS_PLACEHOLDER_LABEL,
   ACTIVITY_NO_DATA_MESSAGE,
   ACTIVITY_REPORT_HEADING,
   ACTIVITY_REPORT_RESULT_PLACEHOLDER,
+  ACTIVITY_RESET_FILTERS_LABEL,
   ACTIVITY_SCOPE_FILTER_LABEL,
   ACTIVITY_SECTION_LABEL,
   ACTIVITY_START_DATE_LABEL,
   ACTIVITY_STATISTICS_HEADING,
   activityDashboardUiStatus,
+  activityListingCategoryEnabled,
   activityListingCategorySelectOptions,
-  activityMetricLayoutSlots,
   activityNoDataPresentation,
   activityScopeSelectOptions,
-  attemptActivityReportGenerationUi,
+  canStartActivityRequest,
   defaultActivityFilters,
+  draftFiltersAfterScopeChange,
   formatActivityFilterSummary,
   getVisibleMetricRows,
+  normalizeActivityFilters,
   type ActivityListingCategory,
   type ActivityMetricRow,
   type ActivityReport,
@@ -38,66 +51,155 @@ import ActivityMetricWidget from './ActivityMetricWidget';
 import ActivityReportResult from './ActivityReportResult';
 
 export interface ActivityDashboardProps {
-  /** Supplied metric rows from later integration — never fabricated here. */
-  metricRows?: ActivityMetricRow[] | null;
-  loading?: boolean;
-  error?: string;
-  /** Show the approved no-data presentation (has_data === false). */
-  showNoData?: boolean;
-  /** Connected report from later tasks — never fabricated here. */
-  report?: ActivityReport | null;
-  initialFilters?: ActivityReportFilters;
+  /** Optional inject for tests — defaults to api.getAdminActivity. */
+  fetchActivity?: (filters: ActivityReportFilters) => Promise<ActivityReport>;
+  /** Skip initial auto-load (tests). */
+  autoLoad?: boolean;
 }
 
 /**
- * US-24.2 / US-24.3 — administrator activity-monitoring dashboard.
- * Layout + metric/report widgets. No aggregation API or report generation.
+ * US-24.6 — administrator activity dashboard wired to GET /api/admin/activity.
  */
 export default function ActivityDashboard({
-  metricRows = null,
-  loading = false,
-  error = '',
-  showNoData = false,
-  report = null,
-  initialFilters = defaultActivityFilters(),
+  fetchActivity = (filters) => api.getAdminActivity(filters),
+  autoLoad = true,
 }: ActivityDashboardProps) {
-  const [filters, setFilters] = useState<ActivityReportFilters>(initialFilters);
-  const [reportNotice, setReportNotice] = useState('');
+  const [draftFilters, setDraftFilters] = useState<ActivityReportFilters>(
+    defaultActivityFilters()
+  );
+  const [appliedFilters, setAppliedFilters] = useState<ActivityReportFilters>(
+    defaultActivityFilters()
+  );
+  const [metricRows, setMetricRows] = useState<ActivityMetricRow[] | null>(null);
+  const [dashboardLoading, setDashboardLoading] = useState(autoLoad);
+  const [dashboardError, setDashboardError] = useState('');
+  const [showNoData, setShowNoData] = useState(false);
+  const [report, setReport] = useState<ActivityReport | null>(null);
+  const [reportGenerating, setReportGenerating] = useState(false);
+  const [reportError, setReportError] = useState('');
+  const fetchActivityRef = useRef(fetchActivity);
+  fetchActivityRef.current = fetchActivity;
 
   const visibleRows = useMemo(
     () =>
       metricRows
-        ? getVisibleMetricRows(filters.activity_scope, metricRows)
+        ? getVisibleMetricRows(appliedFilters.activity_scope, metricRows)
         : [],
-    [filters.activity_scope, metricRows]
+    [appliedFilters.activity_scope, metricRows]
   );
 
   const status = activityDashboardUiStatus({
-    loading,
-    error,
+    loading: dashboardLoading,
+    error: dashboardError,
     showNoData,
-    hasConnectedMetrics: Boolean(metricRows && metricRows.length > 0),
+    hasConnectedMetrics: Boolean(metricRows && !showNoData),
   });
   const noData = activityNoDataPresentation(showNoData);
   const scopeOptions = activityScopeSelectOptions();
   const categoryOptions = activityListingCategorySelectOptions();
-  const layoutSlots = activityMetricLayoutSlots(filters.activity_scope);
-  const listingCategoryVisible =
-    filters.activity_scope === 'all' || filters.activity_scope === 'listings';
+  const listingCategoryVisible = activityListingCategoryEnabled(
+    draftFilters.activity_scope
+  );
+  const busy = !canStartActivityRequest({
+    dashboardLoading,
+    reportGenerating,
+  });
 
-  const updateFilter = <K extends keyof ActivityReportFilters>(
+  const applyServerReport = useCallback((next: ActivityReport) => {
+    setMetricRows(next.metrics);
+    setAppliedFilters(next.filters);
+    setDraftFilters(next.filters);
+    setShowNoData(!next.has_data);
+    setDashboardError('');
+  }, []);
+
+  const loadActivity = useCallback(
+    async (filters: ActivityReportFilters) => {
+      const normalized = normalizeActivityFilters(filters);
+      if (normalized.error) {
+        setDashboardError(normalized.error);
+        return;
+      }
+
+      setDashboardLoading(true);
+      setDashboardError('');
+      try {
+        const next = await fetchActivityRef.current(normalized.filters);
+        applyServerReport(next);
+      } catch (err) {
+        setDashboardError(
+          err instanceof Error && err.message.trim()
+            ? err.message
+            : ACTIVITY_LOAD_ERROR_FALLBACK
+        );
+      } finally {
+        setDashboardLoading(false);
+      }
+    },
+    [applyServerReport]
+  );
+
+  useEffect(() => {
+    if (!autoLoad) return;
+    void loadActivity(defaultActivityFilters());
+    // Initial default aggregate only — filter Apply / Reset call loadActivity explicitly.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoLoad]);
+
+  const updateDraft = <K extends keyof ActivityReportFilters>(
     key: K,
     value: ActivityReportFilters[K]
   ) => {
-    setFilters((current) => ({ ...current, [key]: value }));
-    setReportNotice('');
+    setDraftFilters((current) => ({ ...current, [key]: value }));
+    setDashboardError('');
+    setReportError('');
   };
 
-  const handleGenerateReport = (event: FormEvent) => {
+  const handleScopeChange = (scope: ActivityScope) => {
+    setDraftFilters((current) => draftFiltersAfterScopeChange(current, scope));
+    setDashboardError('');
+    setReportError('');
+  };
+
+  const handleApplyFilters = (event: FormEvent) => {
     event.preventDefault();
-    // Still unconnected — do not fabricate a report.
-    const result = attemptActivityReportGenerationUi();
-    setReportNotice(result.notice);
+    if (busy) return;
+    void loadActivity(draftFilters);
+  };
+
+  const handleResetFilters = () => {
+    if (busy) return;
+    const defaults = defaultActivityFilters();
+    setDraftFilters(defaults);
+    setReportError('');
+    void loadActivity(defaults);
+  };
+
+  const handleGenerateReport = async (event: FormEvent) => {
+    event.preventDefault();
+    if (busy) return;
+
+    const normalized = normalizeActivityFilters(draftFilters);
+    if (normalized.error) {
+      setReportError(normalized.error);
+      return;
+    }
+
+    setReportGenerating(true);
+    setReportError('');
+    try {
+      const next = await fetchActivityRef.current(normalized.filters);
+      setReport(next);
+      applyServerReport(next);
+    } catch (err) {
+      setReportError(
+        err instanceof Error && err.message.trim()
+          ? err.message
+          : ACTIVITY_GENERATE_ERROR_FALLBACK
+      );
+    } finally {
+      setReportGenerating(false);
+    }
   };
 
   return (
@@ -119,7 +221,11 @@ export default function ActivityDashboard({
         </div>
       </div>
 
-      <div className="card mt-6" aria-label={ACTIVITY_FILTERS_HEADING}>
+      <form
+        className="card mt-6"
+        aria-label={ACTIVITY_FILTERS_HEADING}
+        onSubmit={handleApplyFilters}
+      >
         <div className="flex items-center gap-2">
           <Filter className="h-4 w-4 text-campus-700" />
           <h3 className="font-display text-lg font-bold text-slate-900">
@@ -141,9 +247,10 @@ export default function ActivityDashboard({
               name="start_date"
               type="date"
               className="input-field"
-              value={filters.start_date ?? ''}
+              value={draftFilters.start_date ?? ''}
+              disabled={busy}
               onChange={(event) =>
-                updateFilter('start_date', event.target.value || null)
+                updateDraft('start_date', event.target.value || null)
               }
             />
           </div>
@@ -159,9 +266,10 @@ export default function ActivityDashboard({
               name="end_date"
               type="date"
               className="input-field"
-              value={filters.end_date ?? ''}
+              value={draftFilters.end_date ?? ''}
+              disabled={busy}
               onChange={(event) =>
-                updateFilter('end_date', event.target.value || null)
+                updateDraft('end_date', event.target.value || null)
               }
             />
           </div>
@@ -176,9 +284,10 @@ export default function ActivityDashboard({
               id="activity-scope"
               name="activity_scope"
               className="input-field"
-              value={filters.activity_scope}
+              value={draftFilters.activity_scope}
+              disabled={busy}
               onChange={(event) =>
-                updateFilter('activity_scope', event.target.value as ActivityScope)
+                handleScopeChange(event.target.value as ActivityScope)
               }
             >
               {scopeOptions.map((option) => (
@@ -199,10 +308,10 @@ export default function ActivityDashboard({
               id="activity-listing-category"
               name="listing_category"
               className="input-field"
-              value={filters.listing_category ?? ''}
-              disabled={!listingCategoryVisible}
+              value={draftFilters.listing_category ?? ''}
+              disabled={busy || !listingCategoryVisible}
               onChange={(event) =>
-                updateFilter(
+                updateDraft(
                   'listing_category',
                   (event.target.value || null) as ActivityListingCategory | null
                 )
@@ -216,7 +325,37 @@ export default function ActivityDashboard({
             </select>
           </div>
         </div>
-      </div>
+
+        <div className="mt-5 flex flex-wrap gap-3">
+          <button
+            type="submit"
+            className="btn-primary"
+            disabled={busy}
+            data-testid="activity-apply-filters"
+          >
+            {dashboardLoading ? ACTIVITY_LOADING_LABEL : ACTIVITY_APPLY_FILTERS_LABEL}
+          </button>
+          <button
+            type="button"
+            className="btn-secondary"
+            disabled={busy}
+            onClick={handleResetFilters}
+            data-testid="activity-reset-filters"
+          >
+            {ACTIVITY_RESET_FILTERS_LABEL}
+          </button>
+        </div>
+      </form>
+
+      {dashboardError && (
+        <div
+          className="mt-6 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700"
+          role="alert"
+          data-testid="activity-dashboard-error"
+        >
+          {dashboardError}
+        </div>
+      )}
 
       {status === 'loading' && (
         <div
@@ -225,6 +364,7 @@ export default function ActivityDashboard({
           aria-live="polite"
           aria-busy="true"
           aria-label={ACTIVITY_LOADING_LABEL}
+          data-testid="activity-dashboard-loading"
         >
           <div className="h-28 animate-pulse rounded-2xl bg-slate-200" />
           <p className="flex items-center gap-2 text-sm text-slate-500">
@@ -233,16 +373,7 @@ export default function ActivityDashboard({
         </div>
       )}
 
-      {status === 'error' && error && (
-        <div
-          className="mt-6 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700"
-          role="alert"
-        >
-          {error}
-        </div>
-      )}
-
-      {noData.visible && (
+      {noData.visible && status !== 'loading' && (
         <div
           className="card mt-6 py-10 text-center"
           role="status"
@@ -257,44 +388,29 @@ export default function ActivityDashboard({
         </div>
       )}
 
-      {status !== 'loading' && !noData.visible && (
+      {status === 'ready' && (
         <div className="mt-8" aria-label={ACTIVITY_STATISTICS_HEADING}>
           <h3 className="font-display text-lg font-bold text-slate-900">
             {ACTIVITY_STATISTICS_HEADING}
           </h3>
           <p className="mt-1 text-sm text-slate-500">{ACTIVITY_METRICS_HEADING}</p>
-          {status !== 'ready' && (
-            <p className="mt-1 text-xs text-slate-400">{ACTIVITY_METRICS_PLACEHOLDER_HINT}</p>
-          )}
+          <p className="mt-1 text-xs text-slate-400">
+            Showing results for {formatActivityFilterSummary(appliedFilters)}
+          </p>
 
           <div
             className="mt-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-3"
             aria-label={ACTIVITY_METRICS_HEADING}
             data-testid="activity-metric-grid"
           >
-            {status === 'ready'
-              ? visibleRows.map((row) => (
-                  <ActivityMetricWidget
-                    key={row.key}
-                    metricKey={row.key}
-                    label={row.label}
-                    count={row.count}
-                  />
-                ))
-              : layoutSlots.map((slot) => (
-                  <article
-                    key={slot.key}
-                    className="rounded-2xl border border-dashed border-slate-200 bg-slate-50/80 p-4"
-                    data-testid={`activity-metric-slot-${slot.key}`}
-                  >
-                    <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">
-                      {slot.label}
-                    </p>
-                    <p className="mt-2 text-sm font-medium text-slate-500">
-                      {ACTIVITY_METRICS_PLACEHOLDER_LABEL}
-                    </p>
-                  </article>
-                ))}
+            {visibleRows.map((row) => (
+              <ActivityMetricWidget
+                key={row.key}
+                metricKey={row.key}
+                label={row.label}
+                count={row.count}
+              />
+            ))}
           </div>
         </div>
       )}
@@ -309,22 +425,30 @@ export default function ActivityDashboard({
         <p className="mt-2 text-sm text-slate-500">
           Selected filters:{' '}
           <span className="font-medium text-slate-700">
-            {formatActivityFilterSummary(filters)}
+            {formatActivityFilterSummary(draftFilters)}
           </span>
         </p>
 
         <form onSubmit={handleGenerateReport} className="mt-5">
-          <button type="submit" className="btn-primary">
-            {ACTIVITY_GENERATE_REPORT_LABEL}
+          <button
+            type="submit"
+            className="btn-primary"
+            disabled={busy}
+            data-testid="activity-generate-report"
+          >
+            {reportGenerating
+              ? ACTIVITY_GENERATING_REPORT_LABEL
+              : ACTIVITY_GENERATE_REPORT_LABEL}
           </button>
         </form>
 
-        {reportNotice && (
+        {reportError && (
           <div
-            className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800"
-            role="status"
+            className="mt-4 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700"
+            role="alert"
+            data-testid="activity-report-error"
           >
-            {reportNotice}
+            {reportError}
           </div>
         )}
 

@@ -35,10 +35,7 @@
  *
  * Date filter: created_at on each collection (no fabricated resolved_at).
  *
- * US-24.2 adds layout/presentation helpers for AdminPage ActivityDashboard.
- * US-24.3 adds metric/report widget presentation helpers (display props only).
- * Still no aggregation API, working server filters, or frontend/backend
- * integration — those belong to later US-24 tasks.
+ * US-24.2 layout, US-24.3 widgets, US-24.6 AdminPage ↔ GET /api/admin/activity.
  */
 
 /** Same listing categories enforced by backend validation. */
@@ -239,19 +236,26 @@ export const ACTIVITY_DASHBOARD_DESCRIPTION =
   'Monitor CampusRent usage with date and activity filters, then generate an administrative activity summary.';
 export const ACTIVITY_FILTERS_HEADING = 'Activity filters';
 export const ACTIVITY_FILTERS_HINT =
-  'Filter controls are available for layout. Applying filters does not update statistics until activity reporting is connected.';
+  'Choose a date range, activity scope, and optional listing category, then apply filters to refresh platform statistics.';
+export const ACTIVITY_APPLY_FILTERS_LABEL = 'Apply filters';
+export const ACTIVITY_RESET_FILTERS_LABEL = 'Reset filters';
 export const ACTIVITY_STATISTICS_HEADING = 'Platform statistics';
 export const ACTIVITY_METRICS_HEADING = 'Activity metrics';
 export const ACTIVITY_METRICS_PLACEHOLDER_LABEL = 'Awaiting statistics';
 export const ACTIVITY_METRICS_PLACEHOLDER_HINT =
-  'Metric cards will show live counts after platform statistics are connected. No fabricated values are shown here.';
+  'Platform statistics load from the activity API. No fabricated values are shown.';
 export const ACTIVITY_REPORT_HEADING = 'Activity summary';
 export const ACTIVITY_GENERATE_REPORT_LABEL = 'Generate report';
+export const ACTIVITY_GENERATING_REPORT_LABEL = 'Generating...';
+/** Retained for historical layout tests; Generate Report is connected in US-24.6. */
 export const ACTIVITY_REPORT_NOT_CONNECTED_MESSAGE =
   'Activity report generation is not connected yet.';
 export const ACTIVITY_REPORT_RESULT_PLACEHOLDER =
-  'Generated activity summaries will appear here once reporting is connected.';
+  'Generate a report to see an activity summary for the selected filters.';
 export const ACTIVITY_LOADING_LABEL = 'Loading platform activity...';
+export const ACTIVITY_LOAD_ERROR_FALLBACK = 'Unable to load platform activity.';
+export const ACTIVITY_GENERATE_ERROR_FALLBACK =
+  'Unable to generate the activity summary.';
 export const ACTIVITY_NO_DATA_MESSAGE =
   'No platform activity matches the selected filters.';
 export const ACTIVITY_DATE_FORMAT_MESSAGE = 'Dates must use YYYY-MM-DD format.';
@@ -306,7 +310,8 @@ export type ActivityDashboardUiStatus =
 
 /**
  * Presentation status for the activity dashboard.
- * US-24.2 defaults to layout (structure only, no fabricated ready data).
+ * Successful metrics take priority over a later non-fatal error so prior
+ * results stay visible while the alert is shown separately.
  */
 export function activityDashboardUiStatus(options: {
   loading?: boolean;
@@ -315,10 +320,31 @@ export function activityDashboardUiStatus(options: {
   hasConnectedMetrics?: boolean;
 }): ActivityDashboardUiStatus {
   if (options.loading) return 'loading';
-  if (options.error) return 'error';
   if (options.showNoData) return 'no_data';
   if (options.hasConnectedMetrics) return 'ready';
+  if (options.error) return 'error';
   return 'layout';
+}
+
+/** listing_category is only meaningful for all / listings scopes. */
+export function activityListingCategoryEnabled(scope: ActivityScope): boolean {
+  return scope === 'all' || scope === 'listings';
+}
+
+/**
+ * When scope becomes incompatible with listing_category, clear category.
+ */
+export function draftFiltersAfterScopeChange(
+  filters: ActivityReportFilters,
+  nextScope: ActivityScope
+): ActivityReportFilters {
+  return {
+    ...filters,
+    activity_scope: nextScope,
+    listing_category: activityListingCategoryEnabled(nextScope)
+      ? filters.listing_category
+      : null,
+  };
 }
 
 export function activityScopeSelectOptions(): Array<{
@@ -363,7 +389,10 @@ export function formatActivityFilterSummary(filters: ActivityReportFilters): str
   return `${start} → ${end} · ${scope} · ${category}`;
 }
 
-/** US-24.2 — Generate Report remains unconnected (no fabricated report). */
+/**
+ * @deprecated US-24.2 placeholder — Generate Report is connected in US-24.6.
+ * Kept so older layout assertions can still import the symbol.
+ */
 export function attemptActivityReportGenerationUi(): {
   notice: string;
   report: null;
@@ -374,6 +403,197 @@ export function attemptActivityReportGenerationUi(): {
     report: null,
     success: '',
   };
+}
+
+/** Build GET /api/admin/activity path with only set query parameters. */
+export function buildAdminActivityPath(
+  filters: ActivityReportFilters = defaultActivityFilters()
+): string {
+  const params = new URLSearchParams();
+  if (filters.start_date) {
+    params.set('start_date', filters.start_date);
+  }
+  if (filters.end_date) {
+    params.set('end_date', filters.end_date);
+  }
+  if (filters.activity_scope) {
+    params.set('activity_scope', filters.activity_scope);
+  }
+  if (filters.listing_category) {
+    params.set('listing_category', filters.listing_category);
+  }
+  const query = params.toString();
+  return query ? `/admin/activity?${query}` : '/admin/activity';
+}
+
+export function buildGetAdminActivityCall(
+  filters: ActivityReportFilters = defaultActivityFilters()
+): { method: 'GET'; path: string } {
+  return {
+    method: 'GET',
+    path: buildAdminActivityPath(filters),
+  };
+}
+
+export function canStartActivityRequest(options: {
+  dashboardLoading?: boolean;
+  reportGenerating?: boolean;
+}): boolean {
+  return !options.dashboardLoading && !options.reportGenerating;
+}
+
+export function activityReportFromApi(value: unknown): ActivityReport | null {
+  if (!value || typeof value !== 'object') return null;
+  const report = value as ActivityReport;
+  if (
+    typeof report.generated_at !== 'string' ||
+    !report.filters ||
+    !Array.isArray(report.metrics) ||
+    typeof report.summary_total !== 'number' ||
+    typeof report.has_data !== 'boolean'
+  ) {
+    return null;
+  }
+  return report;
+}
+
+export type ActivityFetchResult = {
+  status: 'ready' | 'no_data' | 'error';
+  metrics: ActivityMetricRow[] | null;
+  appliedFilters: ActivityReportFilters;
+  showNoData: boolean;
+  error: string;
+  report: ActivityReport | null;
+  summary_total: number | null;
+};
+
+/**
+ * Load / apply-filters flow. On failure, previous successful metrics are kept.
+ */
+export async function runActivityDashboardFetchFlow(
+  fetchActivity: (filters: ActivityReportFilters) => Promise<ActivityReport>,
+  draftFilters: ActivityReportFilters = defaultActivityFilters(),
+  previous: {
+    metrics: ActivityMetricRow[] | null;
+    appliedFilters: ActivityReportFilters;
+    showNoData: boolean;
+  } = {
+    metrics: null,
+    appliedFilters: defaultActivityFilters(),
+    showNoData: false,
+  }
+): Promise<ActivityFetchResult> {
+  const normalized = normalizeActivityFilters(draftFilters);
+  if (normalized.error) {
+    return {
+      status: previous.metrics ? 'ready' : 'error',
+      metrics: previous.metrics,
+      appliedFilters: previous.appliedFilters,
+      showNoData: previous.showNoData,
+      error: normalized.error,
+      report: null,
+      summary_total: null,
+    };
+  }
+
+  try {
+    const report = await fetchActivity(normalized.filters);
+    const parsed = activityReportFromApi(report) ?? report;
+    return {
+      status: parsed.has_data ? 'ready' : 'no_data',
+      metrics: parsed.metrics,
+      appliedFilters: parsed.filters,
+      showNoData: !parsed.has_data,
+      error: '',
+      report: parsed,
+      summary_total: parsed.summary_total,
+    };
+  } catch (err) {
+    const message =
+      err instanceof Error && err.message.trim()
+        ? err.message
+        : ACTIVITY_LOAD_ERROR_FALLBACK;
+    return {
+      status: previous.metrics ? 'ready' : 'error',
+      metrics: previous.metrics,
+      appliedFilters: previous.appliedFilters,
+      showNoData: previous.showNoData,
+      error: message,
+      report: null,
+      summary_total: null,
+    };
+  }
+}
+
+/**
+ * Generate Report flow — stores the server ActivityReport only (never fabricates).
+ */
+export async function runActivityGenerateReportFlow(
+  fetchActivity: (filters: ActivityReportFilters) => Promise<ActivityReport>,
+  draftFilters: ActivityReportFilters,
+  previousReport: ActivityReport | null = null
+): Promise<{
+  called: boolean;
+  generatingBlocked: boolean;
+  report: ActivityReport | null;
+  metrics: ActivityMetricRow[] | null;
+  appliedFilters: ActivityReportFilters | null;
+  showNoData: boolean;
+  error: string;
+  success: boolean;
+}> {
+  const normalized = normalizeActivityFilters(draftFilters);
+  if (normalized.error) {
+    return {
+      called: false,
+      generatingBlocked: false,
+      report: previousReport,
+      metrics: previousReport?.metrics ?? null,
+      appliedFilters: previousReport?.filters ?? null,
+      showNoData: previousReport ? !previousReport.has_data : false,
+      error: normalized.error,
+      success: false,
+    };
+  }
+
+  try {
+    const report = await fetchActivity(normalized.filters);
+    const parsed = activityReportFromApi(report) ?? report;
+    return {
+      called: true,
+      generatingBlocked: false,
+      report: parsed,
+      metrics: parsed.metrics,
+      appliedFilters: parsed.filters,
+      showNoData: !parsed.has_data,
+      error: '',
+      success: true,
+    };
+  } catch (err) {
+    const message =
+      err instanceof Error && err.message.trim()
+        ? err.message
+        : ACTIVITY_GENERATE_ERROR_FALLBACK;
+    return {
+      called: true,
+      generatingBlocked: false,
+      report: previousReport,
+      metrics: previousReport?.metrics ?? null,
+      appliedFilters: previousReport?.filters ?? null,
+      showNoData: previousReport ? !previousReport.has_data : false,
+      error: message,
+      success: false,
+    };
+  }
+}
+
+/** True when a blind local sum would disagree with server summary_total. */
+export function activitySummaryUsesServerTotalOnly(report: ActivityReport): boolean {
+  return (
+    activityReportSummaryTotalForDisplay(report) === report.summary_total &&
+    activityReportSummaryTotalForDisplay(report) !==
+      activityReportBlindMetricRowSum(report)
+  );
 }
 
 export function activityNoDataPresentation(show: boolean): {

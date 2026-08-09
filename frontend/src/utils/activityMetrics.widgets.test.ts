@@ -251,7 +251,7 @@ describe('US-24.3 activity report result widget presentation', () => {
 });
 
 describe('US-24.3 activity dashboard widget regression', () => {
-  test('Activity Monitoring remains on /admin with widgets and unconnected Generate Report', () => {
+  test('Activity Monitoring remains on /admin with widgets and connected activity API', () => {
     assert.equal(ACTIVITY_DASHBOARD_PATH, '/admin');
 
     const adminSource = readFileSync(join(here, '../pages/AdminPage.tsx'), 'utf8');
@@ -266,10 +266,12 @@ describe('US-24.3 activity dashboard widget regression', () => {
     assert.ok(dashboardSource.includes('ActivityMetricWidget'));
     assert.ok(dashboardSource.includes('ActivityReportResult'));
     assert.ok(dashboardSource.includes('getVisibleMetricRows'));
-    assert.ok(dashboardSource.includes(ACTIVITY_GENERATE_REPORT_LABEL) || dashboardSource.includes('ACTIVITY_GENERATE_REPORT_LABEL'));
-    assert.ok(dashboardSource.includes('attemptActivityReportGenerationUi'));
+    assert.ok(
+      dashboardSource.includes(ACTIVITY_GENERATE_REPORT_LABEL) ||
+        dashboardSource.includes('ACTIVITY_GENERATE_REPORT_LABEL')
+    );
+    assert.ok(dashboardSource.includes('api.getAdminActivity') || dashboardSource.includes('getAdminActivity'));
+    assert.equal(dashboardSource.includes('attemptActivityReportGenerationUi'), false);
     assert.equal(dashboardSource.includes('fetch('), false);
-    assert.equal(dashboardSource.includes('api.'), false);
-    assert.equal(adminSource.includes('getActivity'), false);
   });
 });
