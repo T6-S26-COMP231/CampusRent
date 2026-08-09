@@ -402,3 +402,204 @@ export function buildModerationAuditRecord(
     created_at: createdAt,
   };
 }
+
+/* -------------------------------------------------------------------------- */
+/* US-23.2 — moderation queue / report-detail UI view-model                   */
+/* -------------------------------------------------------------------------- */
+
+export const MODERATION_QUEUE_LOADING_LABEL = 'Loading reports…';
+export const MODERATION_QUEUE_ERROR_FALLBACK = 'Unable to load reports.';
+export const MODERATION_DETAIL_EMPTY_SELECTION = 'Select a report to review its details.';
+export const MODERATION_TARGET_MISSING_LISTING = 'This listing is no longer available.';
+export const MODERATION_TARGET_MISSING_USER = 'This user account is no longer available.';
+export const MODERATION_ACTION_NOT_CONNECTED_MESSAGE =
+  'Moderation actions are not connected yet.';
+export const MODERATION_CANCEL_CONFIRM_LABEL = 'Cancel';
+export const MODERATION_CONFIRM_ACTION_LABEL = 'Confirm';
+
+/**
+ * Full admin report view for queue + detail (#154 will populate this).
+ * Compatible with US-20 Report fields; status/target resolved for display.
+ */
+export interface ModerationReportView {
+  report: ModerationReportDetail;
+  target: ModerationTargetView;
+}
+
+export type ModerationQueueUiStatus = 'loading' | 'empty' | 'error' | 'populated';
+
+export interface ModerationQueueUiState {
+  status: ModerationQueueUiStatus;
+  rows: ModerationQueueRow[];
+  error: string;
+  selectedReportId: number | null;
+}
+
+export interface ModerationActionUiState {
+  pendingAction: ModerationAction | null;
+  notice: string;
+}
+
+/** Map a full report view to a queue row (no fabricated fields). */
+export function moderationReportViewToQueueRow(view: ModerationReportView): ModerationQueueRow {
+  const { report, target } = view;
+  const targetLabel =
+    target.target_type === 'listing'
+      ? formatModerationListingLabel(
+          target.exists ? { title: target.title ?? undefined } : null,
+          target.listing_id
+        )
+      : target.exists && target.display_name?.trim()
+        ? target.display_name.trim()
+        : formatModerationPersonLabel(
+            target.exists ? { email: target.email ?? undefined } : null,
+            target.user_id
+          );
+
+  return {
+    report_id: report.report_id,
+    target_type: report.target_type,
+    target_id: report.target_id,
+    target_label: targetLabel,
+    target_exists: target.exists,
+    reporter_id: report.reporter_id,
+    reporter_label: report.reporter_label,
+    reason: report.reason,
+    created_at: report.created_at,
+    status: normalizeModerationStatus(report.status),
+  };
+}
+
+export function moderationQueueRowsFromViews(views: ModerationReportView[]): ModerationQueueRow[] {
+  return sortModerationQueueRows(views.map(moderationReportViewToQueueRow));
+}
+
+export function findModerationReportView(
+  views: ModerationReportView[],
+  reportId: number | null
+): ModerationReportView | null {
+  if (reportId == null) return null;
+  return views.find((view) => view.report.report_id === reportId) ?? null;
+}
+
+export function moderationQueueUiStatus(
+  loading: boolean,
+  error: string,
+  rowCount: number
+): ModerationQueueUiStatus {
+  if (loading) return 'loading';
+  if (error.trim()) return 'error';
+  if (rowCount === 0) return 'empty';
+  return 'populated';
+}
+
+export function applyModerationQueueLoading(): Pick<ModerationQueueUiState, 'status' | 'error'> {
+  return { status: 'loading', error: '' };
+}
+
+export function applyModerationQueueLoaded(
+  views: ModerationReportView[]
+): Pick<ModerationQueueUiState, 'status' | 'rows' | 'error'> {
+  const rows = moderationQueueRowsFromViews(views);
+  return {
+    status: moderationQueueUiStatus(false, '', rows.length),
+    rows,
+    error: '',
+  };
+}
+
+export function applyModerationQueueFailure(
+  error: unknown
+): Pick<ModerationQueueUiState, 'status' | 'rows' | 'error' | 'selectedReportId'> {
+  return {
+    status: 'error',
+    rows: [],
+    selectedReportId: null,
+    error: error instanceof Error ? error.message : MODERATION_QUEUE_ERROR_FALLBACK,
+  };
+}
+
+export function selectModerationReport(
+  currentSelectedId: number | null,
+  reportId: number
+): number {
+  return currentSelectedId === reportId ? reportId : reportId;
+}
+
+export function visibleModerationActions(
+  targetType: ModerationTargetType,
+  status: ModerationStatus | undefined | null
+): ModerationAction[] {
+  return actionsForReportTarget(targetType).filter((action) =>
+    canPerformModerationAction(targetType, action, status)
+  );
+}
+
+export function beginModerationActionConfirm(
+  action: ModerationAction
+): ModerationActionUiState {
+  if (moderationActionRequiresConfirm(action)) {
+    return { pendingAction: action, notice: '' };
+  }
+  return { pendingAction: null, notice: '' };
+}
+
+export function cancelModerationActionConfirm(): ModerationActionUiState {
+  return { pendingAction: null, notice: '' };
+}
+
+/**
+ * UI-only action seam for #153.
+ * Never claims success; later tasks replace the not-connected path with real handlers.
+ */
+export function attemptModerationActionUi(
+  action: ModerationAction,
+  options: { confirmed?: boolean; onAction?: (action: ModerationAction) => void | Promise<void> } = {}
+): ModerationActionUiState {
+  if (moderationActionRequiresConfirm(action) && !options.confirmed) {
+    return beginModerationActionConfirm(action);
+  }
+
+  if (!options.onAction) {
+    return {
+      pendingAction: null,
+      notice: MODERATION_ACTION_NOT_CONNECTED_MESSAGE,
+    };
+  }
+
+  void options.onAction(action);
+  return { pendingAction: null, notice: '' };
+}
+
+export function moderationTargetHeading(target: ModerationTargetView): string {
+  return target.target_type === 'listing'
+    ? MODERATION_TARGET_LISTING_HEADING
+    : MODERATION_TARGET_USER_HEADING;
+}
+
+export function moderationTargetMissingMessage(target: ModerationTargetView): string {
+  return target.target_type === 'listing'
+    ? MODERATION_TARGET_MISSING_LISTING
+    : MODERATION_TARGET_MISSING_USER;
+}
+
+export function formatModerationTimestamp(iso: string): string {
+  const parsed = Date.parse(iso);
+  if (Number.isNaN(parsed)) return iso;
+  return new Date(parsed).toLocaleString();
+}
+
+export function moderationActionButtonClass(action: ModerationAction): 'primary' | 'secondary' | 'danger' {
+  if (action === 'remove_listing' || action === 'suspend_user') return 'danger';
+  if (action === 'resolve') return 'primary';
+  return 'secondary';
+}
+
+/** Closed reports show no actionable controls in the queue detail UI. */
+export function moderationActionsDisabledReason(
+  status: ModerationStatus | undefined | null
+): string {
+  const normalized = normalizeModerationStatus(status);
+  if (normalized === 'open') return '';
+  return `This report is ${moderationStatusLabel(normalized).toLowerCase()}.`;
+}
