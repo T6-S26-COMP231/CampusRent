@@ -30,18 +30,18 @@
  *   - password_hash / password — never exposed or editable here
  *   - created_at — account metadata (optional display only)
  *
- * Profile UI flow (US-21.2 AccountPage):
- *   View mode → current editable values + read-only account/verification
+ * Profile UI flow (US-21.2 / US-21.5 AccountPage):
+ *   Load GET /api/profile → view mode with server values
  *   Edit profile → editable fields become inputs; Save / Cancel
- *   Cancel → discard draft (applyCancelledProfileEdit)
- *   Save (UI-only until US-21.5) → validate → truthful not-connected notice
+ *   Cancel → discard draft (applyCancelledProfileEdit); no API call
+ *   Save → validate → PATCH /api/profile → replace view from server response
  *
  * Validation reuses registration name rules (required non-empty after trim).
  * No invented phone format/length rules — schema allows empty string.
  *
  * APIs / persistence / owner auth / feedback:
  *   US-21.3 GET/UPDATE profile, US-21.4 protected-field enforcement,
- *   US-21.5 integration, US-21.6 loading/success/error feedback.
+ *   US-21.5 integration (this wiring), US-21.6 loading/success/error polish.
  */
 
 export const PROFILE_PAGE_PATH = '/account';
@@ -383,10 +383,8 @@ export function applyUnconnectedProfileSave(): {
 }
 
 /**
- * US-21.2 — validate then apply the unconnected save path.
- * Invalid drafts stay in edit mode with field errors and no success claim.
- * Valid drafts produce an update body (editable fields only) and the
- * truthful not-connected notice — no persistence.
+ * Validate draft before API save.
+ * Invalid drafts stay in edit mode with field errors and no body.
  */
 export function applyProfileFormSave(draft: ProfileEditDraft): {
   mode: ProfileMode;
@@ -409,7 +407,6 @@ export function applyProfileFormSave(draft: ProfileEditDraft): {
   }
 
   const body = buildUpdateProfileBody(draft);
-  const unconnected = applyUnconnectedProfileSave();
   return {
     mode: 'edit',
     draft: {
@@ -418,10 +415,157 @@ export function applyProfileFormSave(draft: ProfileEditDraft): {
       phone: body.phone,
     },
     errors: { first_name: '', last_name: '', phone: '' },
-    notice: unconnected.notice,
-    success: unconnected.success,
+    notice: '',
+    success: '',
     body,
   };
+}
+
+/** US-21.5 — GET /api/profile call descriptor. */
+export function buildGetProfileCall(): { path: string; method: 'GET' } {
+  return { path: '/profile', method: 'GET' };
+}
+
+/** US-21.5 — PATCH /api/profile call descriptor (editable fields only). */
+export function buildUpdateProfileCall(
+  draft: ProfileEditDraft
+): { path: string; method: 'PATCH'; body: UpdateProfileBody } {
+  return {
+    path: '/profile',
+    method: 'PATCH',
+    body: buildUpdateProfileBody(draft),
+  };
+}
+
+export function profileErrorMessage(
+  error: unknown,
+  fallback = 'Unable to update profile'
+): string {
+  return error instanceof Error && error.message.trim()
+    ? error.message
+    : fallback;
+}
+
+export function applySuccessfulProfileSave(serverUser: CurrentUserLike): {
+  mode: ProfileMode;
+  profile: ProfileView | null;
+  draft: ProfileEditDraft | null;
+  errors: ProfileFieldErrors;
+  notice: string;
+  success: string;
+} {
+  const profile = toProfileView(serverUser);
+  return {
+    mode: 'view',
+    profile,
+    draft: null,
+    errors: { first_name: '', last_name: '', phone: '' },
+    notice: '',
+    success: PROFILE_SUCCESS_MESSAGE,
+  };
+}
+
+export function applyFailedProfileSave(
+  draft: ProfileEditDraft,
+  error: unknown
+): {
+  mode: ProfileMode;
+  draft: ProfileEditDraft;
+  errors: ProfileFieldErrors;
+  error: string;
+  success: string;
+} {
+  return {
+    mode: 'edit',
+    draft,
+    errors: { first_name: '', last_name: '', phone: '' },
+    error: profileErrorMessage(error),
+    success: '',
+  };
+}
+
+/**
+ * Pure load helper for AccountPage / tests.
+ * Maps server User into ProfileView; never fabricates personal fields.
+ */
+export async function runProfileLoadFlow(
+  load: () => Promise<CurrentUserLike>
+): Promise<{
+  profile: ProfileView | null;
+  error: string;
+}> {
+  try {
+    const user = await load();
+    const profile = toProfileView(user);
+    if (!profile) {
+      return { profile: null, error: PROFILE_LOAD_ERROR_FALLBACK };
+    }
+    return { profile, error: '' };
+  } catch (error) {
+    return {
+      profile: null,
+      error: profileErrorMessage(error, PROFILE_LOAD_ERROR_FALLBACK),
+    };
+  }
+}
+
+/**
+ * Pure update helper for AccountPage / tests.
+ * Invalid drafts never call update. Failures preserve draft and do not claim success.
+ */
+export async function runProfileUpdateFlow(
+  draft: ProfileEditDraft,
+  update: (body: UpdateProfileBody) => Promise<CurrentUserLike>
+): Promise<{
+  mode: ProfileMode;
+  profile: ProfileView | null;
+  draft: ProfileEditDraft;
+  errors: ProfileFieldErrors;
+  success: string;
+  error: string;
+  body: UpdateProfileBody | null;
+  called: boolean;
+}> {
+  const prepared = applyProfileFormSave(draft);
+  if (!prepared.body) {
+    return {
+      mode: 'edit',
+      profile: null,
+      draft: prepared.draft,
+      errors: prepared.errors,
+      success: '',
+      error: '',
+      body: null,
+      called: false,
+    };
+  }
+
+  try {
+    const serverUser = await update(prepared.body);
+    const saved = applySuccessfulProfileSave(serverUser);
+    return {
+      mode: saved.mode,
+      profile: saved.profile,
+      draft: saved.draft ?? prepared.draft,
+      errors: saved.errors,
+      success: saved.success,
+      error: '',
+      body: prepared.body,
+      called: true,
+    };
+  } catch (error) {
+    return {
+      mode: 'edit',
+      profile: null,
+      // Keep the caller's unsaved draft (not only the trimmed body).
+      draft,
+      errors: { first_name: '', last_name: '', phone: '' },
+      success: '',
+      error: profileErrorMessage(error),
+      body: prepared.body,
+      called: true,
+    };
+  }
 }
 
 /** Field names the AccountPage edit form may render as inputs. */

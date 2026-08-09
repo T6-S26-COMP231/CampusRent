@@ -1,4 +1,4 @@
-import { FormEvent, useMemo, useState } from 'react';
+import { FormEvent, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
   CheckCircle2,
@@ -8,6 +8,7 @@ import {
   ShieldCheck,
   UserRound,
 } from 'lucide-react';
+import { api } from '../api/client';
 import StatusBadge from '../components/StatusBadge';
 import { useAuth } from '../context/AuthContext';
 import {
@@ -18,22 +19,26 @@ import {
   PROFILE_EMAIL_LABEL,
   PROFILE_FIRST_NAME_LABEL,
   PROFILE_LAST_NAME_LABEL,
+  PROFILE_LOAD_ERROR_FALLBACK,
   PROFILE_PHONE_LABEL,
   PROFILE_PHONE_PLACEHOLDER,
   PROFILE_ROLE_LABEL,
-  PROFILE_SAVE_LABEL,
+  PROFILE_SUCCESS_MESSAGE,
   PROFILE_VERIFICATION_LABEL,
   PROFILE_VIEW_HEADING,
   applyCancelledProfileEdit,
   applyEnterProfileEdit,
-  applyProfileFormSave,
   canSubmitProfileDraft,
   profileRoleLabel,
+  profileSaveLabel,
+  runProfileLoadFlow,
+  runProfileUpdateFlow,
   toProfileView,
   type ProfileEditDraft,
   type ProfileFieldErrors,
   type ProfileMode,
   type ProfileVerificationStatus,
+  type ProfileView,
 } from '../utils/manageProfile';
 
 const verificationPanelStyles: Record<
@@ -59,13 +64,58 @@ function emptyErrors(): ProfileFieldErrors {
 }
 
 export default function AccountPage() {
-  const { user, isAdmin } = useAuth();
+  const { user, isAdmin, isVerified, refreshUser } = useAuth();
+  const [profile, setProfile] = useState<ProfileView | null>(null);
+  const [loadingProfile, setLoadingProfile] = useState(false);
+  const [loadError, setLoadError] = useState('');
   const [mode, setMode] = useState<ProfileMode>('view');
   const [draft, setDraft] = useState<ProfileEditDraft | null>(null);
   const [errors, setErrors] = useState<ProfileFieldErrors>(emptyErrors);
-  const [notice, setNotice] = useState('');
+  const [success, setSuccess] = useState('');
+  const [error, setError] = useState('');
+  const [saving, setSaving] = useState(false);
 
-  const profile = useMemo(() => (user && !isAdmin ? toProfileView(user) : null), [user, isAdmin]);
+  useEffect(() => {
+    if (!user || isAdmin) {
+      setProfile(null);
+      setLoadError('');
+      setLoadingProfile(false);
+      return;
+    }
+
+    let cancelled = false;
+
+    const load = async () => {
+      setLoadingProfile(true);
+      setLoadError('');
+      setSuccess('');
+      setError('');
+
+      if (isVerified) {
+        const result = await runProfileLoadFlow(() => api.getProfile());
+        if (cancelled) return;
+        if (result.profile) {
+          setProfile(result.profile);
+          setLoadError('');
+        } else {
+          // Fall back to auth.user for display; do not invent fields.
+          setProfile(toProfileView(user));
+          setLoadError(result.error || PROFILE_LOAD_ERROR_FALLBACK);
+        }
+      } else {
+        // Pending/rejected students: /api/profile is verified-only; show /auth/me data.
+        setProfile(toProfileView(user));
+        setLoadError('');
+      }
+
+      if (!cancelled) setLoadingProfile(false);
+    };
+
+    void load();
+    return () => {
+      cancelled = true;
+    };
+  }, [user, isAdmin, isVerified]);
 
   if (!user) return null;
 
@@ -116,6 +166,14 @@ export default function AccountPage() {
     );
   }
 
+  if (loadingProfile && !profile) {
+    return (
+      <div className="mx-auto max-w-3xl px-4 py-12 sm:px-6">
+        <div className="h-64 animate-pulse rounded-3xl bg-slate-200" />
+      </div>
+    );
+  }
+
   if (!profile) return null;
 
   const verificationStyle = verificationPanelStyles[profile.readOnly.verification_status];
@@ -125,14 +183,18 @@ export default function AccountPage() {
     last_name: profile.personal.last_name,
     phone: profile.personal.phone,
   };
-  const saveEnabled = canSubmitProfileDraft(activeDraft, { mode });
+  const saveEnabled =
+    isVerified && canSubmitProfileDraft(activeDraft, { mode, submitting: saving });
+  const canEdit = isVerified;
 
   const enterEdit = () => {
+    if (!canEdit) return;
     const next = applyEnterProfileEdit(profile);
     setMode(next.mode);
     setDraft(next.draft);
     setErrors(next.errors);
-    setNotice(next.notice);
+    setSuccess('');
+    setError('');
   };
 
   const cancelEdit = () => {
@@ -140,17 +202,48 @@ export default function AccountPage() {
     setMode(next.mode);
     setDraft(next.draft);
     setErrors(next.errors);
-    setNotice(next.notice);
+    setSuccess('');
+    setError('');
   };
 
-  const handleSave = (event: FormEvent) => {
+  const handleSave = async (event: FormEvent) => {
     event.preventDefault();
-    const result = applyProfileFormSave(activeDraft);
-    setMode(result.mode);
+    if (!canEdit || saving) return;
+
+    setSuccess('');
+    setError('');
+    setSaving(true);
+
+    const result = await runProfileUpdateFlow(activeDraft, (body) => api.updateProfile(body));
+
+    setSaving(false);
     setDraft(result.draft);
     setErrors(result.errors);
-    setNotice(result.notice);
-    // US-21.3 / US-21.5 own persistence — never claim a successful save here.
+
+    if (!result.called) {
+      // Client-side validation blocked the request.
+      return;
+    }
+
+    if (result.success && result.profile) {
+      setProfile(result.profile);
+      setMode(result.mode);
+      setDraft(null);
+      setSuccess(result.success || PROFILE_SUCCESS_MESSAGE);
+      setError('');
+      // Keep Layout / auth.user personal fields in sync without mutating AuthContext internals.
+      try {
+        await refreshUser();
+      } catch {
+        /* profile page already has server truth from PATCH response */
+      }
+      return;
+    }
+
+    // Failed PATCH — keep edit mode and draft; never claim success.
+    setMode('edit');
+    setSuccess('');
+    setError(result.error || 'Unable to update profile');
   };
 
   const updateDraft = (field: keyof ProfileEditDraft, value: string) => {
@@ -161,7 +254,8 @@ export default function AccountPage() {
       [field]: value,
     }));
     setErrors((prev) => ({ ...prev, [field]: '' }));
-    setNotice('');
+    setSuccess('');
+    setError('');
   };
 
   return (
@@ -178,6 +272,22 @@ export default function AccountPage() {
           cannot be changed here.
         </p>
       </div>
+
+      {loadError && (
+        <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
+          {loadError}
+        </div>
+      )}
+      {success && (
+        <div className="mb-4 rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-700">
+          {success}
+        </div>
+      )}
+      {error && (
+        <div className="mb-4 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+          {error}
+        </div>
+      )}
 
       <section className="card overflow-hidden !p-0" aria-label={PROFILE_VIEW_HEADING}>
         <div className="border-b border-slate-100 bg-gradient-to-r from-campus-950 to-campus-700 px-6 py-7 text-white">
@@ -211,12 +321,6 @@ export default function AccountPage() {
               </div>
             </div>
           </div>
-
-          {notice && (
-            <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700">
-              {notice}
-            </div>
-          )}
 
           {mode === 'view' ? (
             <>
@@ -270,10 +374,12 @@ export default function AccountPage() {
               </dl>
 
               <div className="mt-6 flex flex-col gap-2 sm:flex-row">
-                <button type="button" className="btn-primary" onClick={enterEdit}>
-                  <Pencil className="h-4 w-4" />
-                  {PROFILE_EDIT_ENTRY_LABEL}
-                </button>
+                {canEdit && (
+                  <button type="button" className="btn-primary" onClick={enterEdit}>
+                    <Pencil className="h-4 w-4" />
+                    {PROFILE_EDIT_ENTRY_LABEL}
+                  </button>
+                )}
                 {profile.readOnly.verification_status === 'verified' && (
                   <Link to="/browse" className="btn-secondary">
                     Continue to Listings
@@ -295,6 +401,7 @@ export default function AccountPage() {
                     value={activeDraft.first_name}
                     onChange={(event) => updateDraft('first_name', event.target.value)}
                     autoComplete="given-name"
+                    disabled={saving}
                   />
                   {errors.first_name && (
                     <p className="mt-1 text-xs font-medium text-red-600">{errors.first_name}</p>
@@ -311,6 +418,7 @@ export default function AccountPage() {
                     value={activeDraft.last_name}
                     onChange={(event) => updateDraft('last_name', event.target.value)}
                     autoComplete="family-name"
+                    disabled={saving}
                   />
                   {errors.last_name && (
                     <p className="mt-1 text-xs font-medium text-red-600">{errors.last_name}</p>
@@ -330,6 +438,7 @@ export default function AccountPage() {
                   onChange={(event) => updateDraft('phone', event.target.value)}
                   placeholder={PROFILE_PHONE_PLACEHOLDER}
                   autoComplete="tel"
+                  disabled={saving}
                 />
               </div>
 
@@ -352,11 +461,16 @@ export default function AccountPage() {
               </dl>
 
               <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
-                <button type="button" className="btn-secondary" onClick={cancelEdit}>
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  onClick={cancelEdit}
+                  disabled={saving}
+                >
                   {PROFILE_CANCEL_LABEL}
                 </button>
                 <button type="submit" className="btn-primary" disabled={!saveEnabled}>
-                  {PROFILE_SAVE_LABEL}
+                  {profileSaveLabel(saving)}
                 </button>
               </div>
             </form>

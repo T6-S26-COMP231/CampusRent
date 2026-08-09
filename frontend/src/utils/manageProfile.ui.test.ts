@@ -137,7 +137,7 @@ describe('US-21.2 profile interface and editable fields', () => {
     assert.equal(cancelled.notice, '');
   });
 
-  test('Save does not falsely claim persistence; protected fields never enter payload', () => {
+  test('validated save body excludes protected fields and does not claim success by itself', () => {
     const view = toProfileView(currentUser)!;
     const result = applyProfileFormSave({
       first_name: '  Ramika  ',
@@ -145,15 +145,9 @@ describe('US-21.2 profile interface and editable fields', () => {
       phone: '  416-555-0199  ',
     });
 
-    assert.equal(result.notice, PROFILE_NOT_CONNECTED_MESSAGE);
-    assert.equal(result.notice, 'Profile saving is not connected yet.');
     assert.equal(result.success, '');
-    assert.equal(claimsProfileSavedSuccessfully(result.notice), false);
+    assert.equal(result.notice, '');
     assert.equal(claimsProfileSavedSuccessfully(result.success), false);
-
-    const unconnected = applyUnconnectedProfileSave();
-    assert.equal(unconnected.success, '');
-
     assert.ok(result.body);
     assert.deepEqual(result.body, {
       first_name: 'Ramika',
@@ -169,5 +163,9 @@ describe('US-21.2 profile interface and editable fields', () => {
       last_name: 'Student',
       phone: '416-555-0100',
     });
+
+    const unconnected = applyUnconnectedProfileSave();
+    assert.equal(unconnected.notice, PROFILE_NOT_CONNECTED_MESSAGE);
+    assert.equal(unconnected.success, '');
   });
 });
