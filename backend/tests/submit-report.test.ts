@@ -1,6 +1,8 @@
 /**
- * US-20.4 / US-20.5 — submit-report API (POST /api/reports).
- * US-20.5 adds target existence and complete submission validation.
+ * US-20.4 / US-20.5 / US-20.7 — submit-report API (POST /api/reports).
+ * Target existence and submission validation live here.
+ * Team6 TAC acceptance mapping for Tests 2–3 is in us-20-acceptance.test.ts.
+ * TAC Test 4 (admin moderation dashboard) remains PENDING US-23.
  */
 import assert from 'node:assert/strict';
 import { after, before, beforeEach, describe, test } from 'node:test';
@@ -108,6 +110,26 @@ describe('US-20.4 submit-report API endpoint', () => {
       },
     });
     assert.equal(response.status, 401);
+  });
+
+  test('unverified student is denied with 403 and nothing is persisted', async () => {
+    const pendingId = await createStudent(
+      'pending-reporter@mycentennialcollege.ca',
+      'Pending',
+      'Reporter',
+      { verification_status: 'pending' }
+    );
+    const response = await api(baseUrl, 'POST', '/api/reports', {
+      token: tokenFor(pendingId, 'pending-reporter@mycentennialcollege.ca'),
+      body: {
+        target_type: 'listing',
+        target_id: listingId,
+        reason: 'Spam',
+        details: 'Should be blocked before persistence.',
+      },
+    });
+    assert.equal(response.status, 403);
+    assert.equal(await Report.countDocuments(), 0);
   });
 
   test('valid verified student can reach the endpoint', async () => {

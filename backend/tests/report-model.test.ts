@@ -1,6 +1,7 @@
 /**
- * US-20.3 — Report model persistence.
- * API submit / target existence / moderation behaviour are later tasks.
+ * US-20.3 / US-20.7 — Report model persistence.
+ * API submit / target existence are covered in submit-report + us-20-acceptance.
+ * Moderation behaviour belongs to US-23.
  */
 import assert from 'node:assert/strict';
 import { after, before, beforeEach, describe, test } from 'node:test';
