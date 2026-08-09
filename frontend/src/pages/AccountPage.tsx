@@ -20,15 +20,24 @@ import {
   PROFILE_FIRST_NAME_LABEL,
   PROFILE_LAST_NAME_LABEL,
   PROFILE_LOAD_ERROR_FALLBACK,
+  PROFILE_LOADING_LABEL,
   PROFILE_PHONE_LABEL,
   PROFILE_PHONE_PLACEHOLDER,
+  PROFILE_RETRY_LOAD_LABEL,
   PROFILE_ROLE_LABEL,
   PROFILE_SUCCESS_MESSAGE,
+  PROFILE_UPDATE_ERROR_FALLBACK,
   PROFILE_VERIFICATION_LABEL,
   PROFILE_VIEW_HEADING,
   applyCancelledProfileEdit,
   applyEnterProfileEdit,
-  canSubmitProfileDraft,
+  applyProfileLoadFailure,
+  applyProfileLoadPending,
+  beginProfileSaveAttempt,
+  canAttemptProfileSave,
+  clearProfileActionFeedback,
+  isProfileSaveDisabled,
+  profileFieldErrorId,
   profileRoleLabel,
   profileSaveLabel,
   runProfileLoadFlow,
@@ -68,6 +77,7 @@ export default function AccountPage() {
   const [profile, setProfile] = useState<ProfileView | null>(null);
   const [loadingProfile, setLoadingProfile] = useState(false);
   const [loadError, setLoadError] = useState('');
+  const [loadAttempt, setLoadAttempt] = useState(0);
   const [mode, setMode] = useState<ProfileMode>('view');
   const [draft, setDraft] = useState<ProfileEditDraft | null>(null);
   const [errors, setErrors] = useState<ProfileFieldErrors>(emptyErrors);
@@ -86,36 +96,53 @@ export default function AccountPage() {
     let cancelled = false;
 
     const load = async () => {
-      setLoadingProfile(true);
-      setLoadError('');
-      setSuccess('');
-      setError('');
-
       if (isVerified) {
+        // Clear prior profile so stale values are not shown as confirmed server data.
+        const pending = applyProfileLoadPending();
+        setLoadingProfile(pending.loading);
+        setProfile(pending.profile);
+        setLoadError(pending.loadError);
+        setSuccess(pending.success);
+        setError(pending.saveError);
+        setMode(pending.mode);
+        setDraft(null);
+        setErrors(emptyErrors());
+
         const result = await runProfileLoadFlow(() => api.getProfile());
         if (cancelled) return;
+
         if (result.profile) {
           setProfile(result.profile);
           setLoadError('');
+          setLoadingProfile(false);
         } else {
-          // Fall back to auth.user for display; do not invent fields.
-          setProfile(toProfileView(user));
-          setLoadError(result.error || PROFILE_LOAD_ERROR_FALLBACK);
+          const failed = applyProfileLoadFailure(
+            result.error || PROFILE_LOAD_ERROR_FALLBACK
+          );
+          setProfile(failed.profile);
+          setLoadError(failed.loadError);
+          setLoadingProfile(failed.loading);
         }
-      } else {
-        // Pending/rejected students: /api/profile is verified-only; show /auth/me data.
-        setProfile(toProfileView(user));
-        setLoadError('');
+        return;
       }
 
-      if (!cancelled) setLoadingProfile(false);
+      // Pending/rejected students: /api/profile is verified-only; show /auth/me data.
+      // Do not invent edit/save success for users who cannot call the profile API.
+      setLoadingProfile(false);
+      setProfile(toProfileView(user));
+      setLoadError('');
+      setSuccess('');
+      setError('');
+      setMode('view');
+      setDraft(null);
+      setErrors(emptyErrors());
     };
 
     void load();
     return () => {
       cancelled = true;
     };
-  }, [user, isAdmin, isVerified]);
+  }, [user, isAdmin, isVerified, loadAttempt]);
 
   if (!user) return null;
 
@@ -169,12 +196,59 @@ export default function AccountPage() {
   if (loadingProfile && !profile) {
     return (
       <div className="mx-auto max-w-3xl px-4 py-12 sm:px-6">
-        <div className="h-64 animate-pulse rounded-3xl bg-slate-200" />
+        <div className="mb-7">
+          <p className="text-sm font-semibold uppercase tracking-[0.2em] text-campus-600">
+            Registered student account
+          </p>
+          <h1 className="mt-2 font-display text-3xl font-extrabold text-slate-950">
+            {PROFILE_VIEW_HEADING}
+          </h1>
+        </div>
+        <div
+          className="card flex min-h-64 flex-col items-center justify-center gap-3 p-8 text-center"
+          role="status"
+          aria-live="polite"
+          aria-busy="true"
+        >
+          <div className="h-10 w-10 animate-pulse rounded-full bg-campus-200" />
+          <p className="text-sm font-medium text-slate-600">{PROFILE_LOADING_LABEL}</p>
+        </div>
       </div>
     );
   }
 
-  if (!profile) return null;
+  if (!profile) {
+    return (
+      <div className="mx-auto max-w-3xl px-4 py-12 sm:px-6">
+        <div className="mb-7">
+          <p className="text-sm font-semibold uppercase tracking-[0.2em] text-campus-600">
+            Registered student account
+          </p>
+          <h1 className="mt-2 font-display text-3xl font-extrabold text-slate-950">
+            {PROFILE_VIEW_HEADING}
+          </h1>
+          <p className="mt-2 text-slate-500">
+            Your profile could not be loaded from the server.
+          </p>
+        </div>
+        <div
+          className="mb-4 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700"
+          role="alert"
+        >
+          {loadError || PROFILE_LOAD_ERROR_FALLBACK}
+        </div>
+        {isVerified && (
+          <button
+            type="button"
+            className="btn-primary"
+            onClick={() => setLoadAttempt((n) => n + 1)}
+          >
+            {PROFILE_RETRY_LOAD_LABEL}
+          </button>
+        )}
+      </div>
+    );
+  }
 
   const verificationStyle = verificationPanelStyles[profile.readOnly.verification_status];
   const VerificationIcon = verificationStyle.icon;
@@ -183,35 +257,46 @@ export default function AccountPage() {
     last_name: profile.personal.last_name,
     phone: profile.personal.phone,
   };
-  const saveEnabled =
-    isVerified && canSubmitProfileDraft(activeDraft, { mode, submitting: saving });
   const canEdit = isVerified;
+  const saveDisabled = isProfileSaveDisabled({
+    canEdit,
+    saving,
+    mode,
+    draft: activeDraft,
+  });
 
   const enterEdit = () => {
-    if (!canEdit) return;
+    if (!canEdit || saving) return;
     const next = applyEnterProfileEdit(profile);
+    const cleared = clearProfileActionFeedback();
     setMode(next.mode);
     setDraft(next.draft);
     setErrors(next.errors);
-    setSuccess('');
-    setError('');
+    setSuccess(cleared.success);
+    setError(cleared.saveError);
   };
 
   const cancelEdit = () => {
+    if (saving) return;
     const next = applyCancelledProfileEdit(profile);
+    const cleared = clearProfileActionFeedback();
     setMode(next.mode);
     setDraft(next.draft);
     setErrors(next.errors);
-    setSuccess('');
-    setError('');
+    setSuccess(cleared.success);
+    setError(cleared.saveError);
   };
 
   const handleSave = async (event: FormEvent) => {
     event.preventDefault();
-    if (!canEdit || saving) return;
+    if (!canAttemptProfileSave({ canEdit, saving, mode })) return;
 
-    setSuccess('');
-    setError('');
+    const attempt = beginProfileSaveAttempt(saving);
+    if (!attempt.allowed) return;
+
+    const cleared = clearProfileActionFeedback();
+    setSuccess(cleared.success);
+    setError(cleared.saveError);
     setSaving(true);
 
     const result = await runProfileUpdateFlow(activeDraft, (body) => api.updateProfile(body));
@@ -221,7 +306,7 @@ export default function AccountPage() {
     setErrors(result.errors);
 
     if (!result.called) {
-      // Client-side validation blocked the request.
+      // Client-side validation blocked the request — no success, no PATCH.
       return;
     }
 
@@ -231,7 +316,6 @@ export default function AccountPage() {
       setDraft(null);
       setSuccess(result.success || PROFILE_SUCCESS_MESSAGE);
       setError('');
-      // Keep Layout / auth.user personal fields in sync without mutating AuthContext internals.
       try {
         await refreshUser();
       } catch {
@@ -243,10 +327,11 @@ export default function AccountPage() {
     // Failed PATCH — keep edit mode and draft; never claim success.
     setMode('edit');
     setSuccess('');
-    setError(result.error || 'Unable to update profile');
+    setError(result.error || PROFILE_UPDATE_ERROR_FALLBACK);
   };
 
   const updateDraft = (field: keyof ProfileEditDraft, value: string) => {
+    if (saving) return;
     setDraft((prev) => ({
       first_name: prev?.first_name ?? profile.personal.first_name,
       last_name: prev?.last_name ?? profile.personal.last_name,
@@ -254,8 +339,9 @@ export default function AccountPage() {
       [field]: value,
     }));
     setErrors((prev) => ({ ...prev, [field]: '' }));
-    setSuccess('');
-    setError('');
+    const cleared = clearProfileActionFeedback();
+    setSuccess(cleared.success);
+    setError(cleared.saveError);
   };
 
   return (
@@ -274,17 +360,27 @@ export default function AccountPage() {
       </div>
 
       {loadError && (
-        <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
+        <div
+          className="mb-4 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800"
+          role="alert"
+        >
           {loadError}
         </div>
       )}
       {success && (
-        <div className="mb-4 rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-700">
+        <div
+          className="mb-4 rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-700"
+          role="status"
+          aria-live="polite"
+        >
           {success}
         </div>
       )}
       {error && (
-        <div className="mb-4 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+        <div
+          className="mb-4 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700"
+          role="alert"
+        >
           {error}
         </div>
       )}
@@ -388,7 +484,12 @@ export default function AccountPage() {
               </div>
             </>
           ) : (
-            <form onSubmit={handleSave} className="mt-6 space-y-4" aria-label={PROFILE_EDIT_HEADING}>
+            <form
+              onSubmit={handleSave}
+              className="mt-6 space-y-4"
+              aria-label={PROFILE_EDIT_HEADING}
+              aria-busy={saving}
+            >
               <div className="grid gap-4 sm:grid-cols-2">
                 <div>
                   <label className="mb-1.5 block text-sm font-semibold text-slate-700" htmlFor="profile-first-name">
@@ -402,9 +503,19 @@ export default function AccountPage() {
                     onChange={(event) => updateDraft('first_name', event.target.value)}
                     autoComplete="given-name"
                     disabled={saving}
+                    aria-invalid={Boolean(errors.first_name)}
+                    aria-describedby={
+                      errors.first_name ? profileFieldErrorId('first_name') : undefined
+                    }
                   />
                   {errors.first_name && (
-                    <p className="mt-1 text-xs font-medium text-red-600">{errors.first_name}</p>
+                    <p
+                      id={profileFieldErrorId('first_name')}
+                      className="mt-1 text-xs font-medium text-red-600"
+                      role="alert"
+                    >
+                      {errors.first_name}
+                    </p>
                   )}
                 </div>
                 <div>
@@ -419,9 +530,19 @@ export default function AccountPage() {
                     onChange={(event) => updateDraft('last_name', event.target.value)}
                     autoComplete="family-name"
                     disabled={saving}
+                    aria-invalid={Boolean(errors.last_name)}
+                    aria-describedby={
+                      errors.last_name ? profileFieldErrorId('last_name') : undefined
+                    }
                   />
                   {errors.last_name && (
-                    <p className="mt-1 text-xs font-medium text-red-600">{errors.last_name}</p>
+                    <p
+                      id={profileFieldErrorId('last_name')}
+                      className="mt-1 text-xs font-medium text-red-600"
+                      role="alert"
+                    >
+                      {errors.last_name}
+                    </p>
                   )}
                 </div>
               </div>
@@ -469,7 +590,12 @@ export default function AccountPage() {
                 >
                   {PROFILE_CANCEL_LABEL}
                 </button>
-                <button type="submit" className="btn-primary" disabled={!saveEnabled}>
+                <button
+                  type="submit"
+                  className="btn-primary"
+                  disabled={saveDisabled}
+                  aria-busy={saving}
+                >
                   {profileSaveLabel(saving)}
                 </button>
               </div>

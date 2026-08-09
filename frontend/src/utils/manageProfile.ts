@@ -30,18 +30,19 @@
  *   - password_hash / password — never exposed or editable here
  *   - created_at — account metadata (optional display only)
  *
- * Profile UI flow (US-21.2 / US-21.5 AccountPage):
- *   Load GET /api/profile → view mode with server values
+ * Profile UI flow (US-21.2 / US-21.5 / US-21.6 AccountPage):
+ *   Load GET /api/profile → loading feedback → view mode with server values
  *   Edit profile → editable fields become inputs; Save / Cancel
  *   Cancel → discard draft (applyCancelledProfileEdit); no API call
- *   Save → validate → PATCH /api/profile → replace view from server response
+ *   Save → validate → saving feedback → PATCH /api/profile
+ *        → success/error feedback from server confirmation
  *
  * Validation reuses registration name rules (required non-empty after trim).
  * No invented phone format/length rules — schema allows empty string.
  *
  * APIs / persistence / owner auth / feedback:
  *   US-21.3 GET/UPDATE profile, US-21.4 protected-field enforcement,
- *   US-21.5 integration (this wiring), US-21.6 loading/success/error polish.
+ *   US-21.5 integration, US-21.6 loading/success/error polish (this feedback).
  */
 
 export const PROFILE_PAGE_PATH = '/account';
@@ -52,6 +53,8 @@ export const PROFILE_EDIT_ENTRY_LABEL = 'Edit profile';
 export const PROFILE_SAVE_LABEL = 'Save changes';
 export const PROFILE_SAVING_LABEL = 'Saving...';
 export const PROFILE_CANCEL_LABEL = 'Cancel';
+export const PROFILE_RETRY_LOAD_LABEL = 'Try again';
+export const PROFILE_LOADING_LABEL = 'Loading profile...';
 export const PROFILE_FIRST_NAME_LABEL = 'First name';
 export const PROFILE_LAST_NAME_LABEL = 'Last name';
 export const PROFILE_PHONE_LABEL = 'Phone';
@@ -60,12 +63,14 @@ export const PROFILE_EMAIL_LABEL = 'Email';
 export const PROFILE_ROLE_LABEL = 'Role';
 export const PROFILE_VERIFICATION_LABEL = 'Verification status';
 export const PROFILE_ACCOUNT_STATUS_LABEL = 'Account status';
-export const PROFILE_SUCCESS_MESSAGE = 'Profile saved successfully.';
+/** Truthful success copy after a confirmed PATCH /api/profile response. */
+export const PROFILE_SUCCESS_MESSAGE = 'Profile updated successfully.';
 export const PROFILE_NOT_CONNECTED_MESSAGE =
   'Profile saving is not connected yet.';
 export const PROFILE_INCOMPLETE_FIRST_NAME_MESSAGE = 'First name is required.';
 export const PROFILE_INCOMPLETE_LAST_NAME_MESSAGE = 'Last name is required.';
 export const PROFILE_LOAD_ERROR_FALLBACK = 'Unable to load profile.';
+export const PROFILE_UPDATE_ERROR_FALLBACK = 'Unable to update profile.';
 
 /** Only fields a student may change through the profile form. */
 export const EDITABLE_PROFILE_FIELDS = [
@@ -437,13 +442,28 @@ export function buildUpdateProfileCall(
   };
 }
 
+/**
+ * Safe user-facing API/error text — first line only; never stack traces.
+ */
+export function sanitizeProfileFeedbackMessage(
+  message: string,
+  fallback = PROFILE_UPDATE_ERROR_FALLBACK
+): string {
+  const firstLine = message.split(/\r?\n/)[0]?.trim() ?? '';
+  return firstLine || fallback;
+}
+
 export function profileErrorMessage(
   error: unknown,
-  fallback = 'Unable to update profile'
+  fallback = PROFILE_UPDATE_ERROR_FALLBACK
 ): string {
-  return error instanceof Error && error.message.trim()
-    ? error.message
-    : fallback;
+  if (error instanceof Error && error.message.trim()) {
+    return sanitizeProfileFeedbackMessage(error.message, fallback);
+  }
+  if (typeof error === 'string' && error.trim()) {
+    return sanitizeProfileFeedbackMessage(error, fallback);
+  }
+  return fallback;
 }
 
 export function applySuccessfulProfileSave(serverUser: CurrentUserLike): {
@@ -579,7 +599,7 @@ export function profileReadOnlyDisplayFields(): ProtectedProfileField[] {
 }
 
 export function claimsProfileSavedSuccessfully(message: string): boolean {
-  return /saved successfully/i.test(message);
+  return /(?:saved|updated) successfully/i.test(message);
 }
 
 /** Prove verification is never treated as an editable field in design helpers. */
@@ -589,4 +609,142 @@ export function verificationStatusIsEditableInput(): boolean {
 
 export function profileSaveLabel(submitting: boolean): string {
   return submitting ? PROFILE_SAVING_LABEL : PROFILE_SAVE_LABEL;
+}
+
+/** US-21.6 — page-level feedback status for AccountPage. */
+export type ProfilePageUiStatus =
+  | 'loading'
+  | 'ready'
+  | 'load_error'
+  | 'editing'
+  | 'saving'
+  | 'save_error'
+  | 'success';
+
+export function profilePageUiStatus(state: {
+  loading: boolean;
+  profile: ProfileView | null;
+  loadError: string;
+  mode: ProfileMode;
+  saving: boolean;
+  saveError: string;
+  success: string;
+}): ProfilePageUiStatus {
+  if (state.loading && !state.profile) return 'loading';
+  if (!state.profile) return 'load_error';
+  if (state.saving) return 'saving';
+  if (state.mode === 'edit' && state.saveError) return 'save_error';
+  if (state.mode === 'view' && state.success) return 'success';
+  if (state.mode === 'edit') return 'editing';
+  return 'ready';
+}
+
+/** Start GET /api/profile — clear prior profile so stale data is not shown as confirmed. */
+export function applyProfileLoadPending(): {
+  loading: boolean;
+  profile: null;
+  loadError: string;
+  success: string;
+  saveError: string;
+  mode: ProfileMode;
+} {
+  return {
+    loading: true,
+    profile: null,
+    loadError: '',
+    success: '',
+    saveError: '',
+    mode: 'view',
+  };
+}
+
+export function applyProfileLoadSuccess(serverUser: CurrentUserLike): {
+  loading: boolean;
+  profile: ProfileView | null;
+  loadError: string;
+} {
+  return {
+    loading: false,
+    profile: toProfileView(serverUser),
+    loadError: '',
+  };
+}
+
+/** Failed GET — no fabricated profile values. */
+export function applyProfileLoadFailure(error: unknown): {
+  loading: boolean;
+  profile: null;
+  loadError: string;
+} {
+  return {
+    loading: false,
+    profile: null,
+    loadError: profileErrorMessage(error, PROFILE_LOAD_ERROR_FALLBACK),
+  };
+}
+
+/**
+ * Gate a PATCH attempt. When already saving, reject so duplicate clicks
+ * cannot start a second request.
+ */
+export function beginProfileSaveAttempt(alreadySaving: boolean): {
+  allowed: boolean;
+  saving: boolean;
+} {
+  if (alreadySaving) {
+    return { allowed: false, saving: true };
+  }
+  return { allowed: true, saving: true };
+}
+
+export function canAttemptProfileSave(options: {
+  canEdit: boolean;
+  saving: boolean;
+  mode: ProfileMode;
+}): boolean {
+  return options.canEdit && !options.saving && options.mode === 'edit';
+}
+
+export function isProfileSaveDisabled(options: {
+  canEdit: boolean;
+  saving: boolean;
+  mode: ProfileMode;
+  draft: ProfileEditDraft;
+}): boolean {
+  if (!canAttemptProfileSave(options)) return true;
+  return !canSubmitProfileDraft(options.draft, {
+    mode: options.mode,
+    submitting: options.saving,
+  });
+}
+
+/** Clear stale success/API banners when the user edits, cancels, or retries. */
+export function clearProfileActionFeedback(): {
+  success: string;
+  saveError: string;
+} {
+  return { success: '', saveError: '' };
+}
+
+export function profileFieldErrorId(field: EditableProfileField): string {
+  return `profile-${field}-error`;
+}
+
+export function profileSuccessMessage(): string {
+  return PROFILE_SUCCESS_MESSAGE;
+}
+
+/**
+ * Protected identity display remains read-only across all feedback states.
+ * Never becomes an input just because load/save feedback is active.
+ */
+export function profileProtectedFieldsStayReadOnly(
+  status: ProfilePageUiStatus
+): boolean {
+  void status;
+  return (
+    !isEditableProfileField('email') &&
+    !isEditableProfileField('verification_status') &&
+    !verificationStatusIsEditableInput()
+  );
 }

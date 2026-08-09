@@ -113,7 +113,7 @@ describe('US-21.5 profile update integration', () => {
     assert.equal(profileUpdateBodyExcludesProtectedFields(submitted!), true);
     assert.equal(result.mode, 'view');
     assert.equal(result.success, PROFILE_SUCCESS_MESSAGE);
-    assert.equal(result.success, 'Profile saved successfully.');
+    assert.equal(result.success, 'Profile updated successfully.');
     assert.equal(claimsProfileSavedSuccessfully(result.success), true);
     assert.equal(result.error, '');
     assert.ok(result.profile);
