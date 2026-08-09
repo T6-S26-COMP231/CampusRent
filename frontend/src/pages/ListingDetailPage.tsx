@@ -11,9 +11,19 @@ import {
 import { api, assetUrl, Listing, RentalRequest } from '../api/client';
 import { useAuth } from '../context/AuthContext';
 import ConversationStartedNotice from '../components/ConversationStartedNotice';
+import ReportContentForm from '../components/ReportContentForm';
 import StartConversationButton from '../components/StartConversationButton';
 import StatusBadge from '../components/StatusBadge';
+import {
+  REPORT_LISTING_ENTRY_LABEL,
+  REPORT_USER_ENTRY_LABEL,
+  listingDetailReportControls,
+  sameEntityId,
+  type ReportTarget,
+} from '../utils/reportContent';
 import { ConversationTarget } from '../utils/startConversation';
+
+type ReportPanel = 'listing' | 'user' | null;
 
 export default function ListingDetailPage() {
   const { id } = useParams();
@@ -27,6 +37,7 @@ export default function ListingDetailPage() {
   const [endDate, setEndDate] = useState('');
   const [success, setSuccess] = useState('');
   const [error, setError] = useState('');
+  const [reportPanel, setReportPanel] = useState<ReportPanel>(null);
   const [conversationNotice, setConversationNotice] = useState<{
     message: string;
     conversationId: number;
@@ -87,7 +98,15 @@ export default function ListingDetailPage() {
 
   if (!listing) return null;
 
-  const isOwner = user?.id === listing.owner?.id;
+  // Compare with numeric coercion — string/number id mismatch must not hide controls.
+  const isOwner = sameEntityId(user?.id, listing.owner?.id);
+  const {
+    canReportListing,
+    canReportOwner,
+    listingTarget: listingReportTarget,
+    ownerTarget: ownerReportTarget,
+  } = listingDetailReportControls(listing, user?.id);
+
   const ownerConversationTarget: ConversationTarget | null = listing.owner
     ? {
         listingId: listing.id,
@@ -96,6 +115,13 @@ export default function ListingDetailPage() {
         counterpartRole: 'owner',
       }
     : null;
+
+  const activeReportTarget: ReportTarget | null =
+    reportPanel === 'listing'
+      ? listingReportTarget
+      : reportPanel === 'user'
+        ? ownerReportTarget
+        : null;
 
   return (
     <div className="mx-auto max-w-6xl px-4 py-10 sm:px-6">
@@ -197,7 +223,44 @@ export default function ListingDetailPage() {
                   setError(message);
                 }}
               />
+              {canReportOwner && (
+                <button
+                  type="button"
+                  className="btn-secondary mt-3 w-full"
+                  disabled={submitting}
+                  onClick={() => {
+                    setError('');
+                    setSuccess('');
+                    setReportPanel((current) => (current === 'user' ? null : 'user'));
+                  }}
+                >
+                  {REPORT_USER_ENTRY_LABEL}
+                </button>
+              )}
             </div>
+          )}
+
+          {canReportListing && (
+            <button
+              type="button"
+              className="btn-secondary mt-4 w-full"
+              disabled={submitting}
+              onClick={() => {
+                setError('');
+                setSuccess('');
+                setReportPanel((current) => (current === 'listing' ? null : 'listing'));
+              }}
+            >
+              {REPORT_LISTING_ENTRY_LABEL}
+            </button>
+          )}
+
+          {activeReportTarget && (
+            <ReportContentForm
+              target={activeReportTarget}
+              viewerId={user?.id}
+              onCancel={() => setReportPanel(null)}
+            />
           )}
 
           {conversationNotice && (

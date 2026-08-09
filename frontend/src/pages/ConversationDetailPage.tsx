@@ -4,6 +4,7 @@ import { ArrowLeft, MessageCircle } from 'lucide-react';
 import { api, ConversationSummary } from '../api/client';
 import ConversationHistoryThread from '../components/ConversationHistoryThread';
 import MessageComposer from '../components/MessageComposer';
+import ReportContentForm from '../components/ReportContentForm';
 import { useAuth } from '../context/AuthContext';
 import {
   appendHistoryAfterSend,
@@ -18,6 +19,11 @@ import {
   toActiveConversationIdentity,
   type ConversationMessage,
 } from '../utils/conversationHistory';
+import {
+  REPORT_USER_ENTRY_LABEL,
+  canReportTarget,
+  toReportUserTarget,
+} from '../utils/reportContent';
 import { isConversationParticipant } from '../utils/sendMessage';
 
 /**
@@ -32,6 +38,7 @@ export default function ConversationDetailPage() {
   const [messages, setMessages] = useState<ConversationMessage[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [showReportUser, setShowReportUser] = useState(false);
 
   useEffect(() => {
     const conversationId = Number(id);
@@ -48,6 +55,7 @@ export default function ConversationDetailPage() {
     setError('');
     setConversation(null);
     setMessages([]);
+    setShowReportUser(false);
 
     Promise.all([
       api.get<ConversationSummary>(`/conversations/${conversationId}`),
@@ -86,6 +94,17 @@ export default function ConversationDetailPage() {
   const canCompose = isConversationParticipant(viewerId, participantIds);
   const identity = conversation ? toActiveConversationIdentity(conversation) : null;
 
+  const counterpartReportTarget =
+    conversation?.counterpart != null
+      ? toReportUserTarget(conversation.counterpart, {
+          listingId: conversation.listing_id,
+          listingTitle: conversation.listing?.title,
+        })
+      : null;
+  const canReportCounterpart =
+    Boolean(counterpartReportTarget) &&
+    canReportTarget(viewerId, counterpartReportTarget);
+
   const handleMessageSent = (sent: ConversationMessage) => {
     setMessages((current) => appendHistoryAfterSend(current, sent));
   };
@@ -117,25 +136,44 @@ export default function ConversationDetailPage() {
 
       {conversation && identity && !error && (
         <section className="card">
-          <div className="flex items-start gap-3">
-            <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-campus-50 text-campus-700">
-              <MessageCircle className="h-5 w-5" />
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div className="flex items-start gap-3">
+              <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-campus-50 text-campus-700">
+                <MessageCircle className="h-5 w-5" />
+              </div>
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">
+                  {historyHeaderEyebrow()}
+                </p>
+                <h1 className="mt-1 font-display text-2xl font-extrabold text-slate-950">
+                  {historyHeaderTitle(identity)}
+                </h1>
+                <p className="mt-2 text-sm text-slate-600">
+                  {historyHeaderSubtitle(identity)}
+                </p>
+                <p className="mt-1 text-xs text-slate-400">
+                  Updated {formatConversationTime(conversation.updated_at || conversation.created_at)}
+                </p>
+              </div>
             </div>
-            <div>
-              <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">
-                {historyHeaderEyebrow()}
-              </p>
-              <h1 className="mt-1 font-display text-2xl font-extrabold text-slate-950">
-                {historyHeaderTitle(identity)}
-              </h1>
-              <p className="mt-2 text-sm text-slate-600">
-                {historyHeaderSubtitle(identity)}
-              </p>
-              <p className="mt-1 text-xs text-slate-400">
-                Updated {formatConversationTime(conversation.updated_at || conversation.created_at)}
-              </p>
-            </div>
+            {canReportCounterpart && (
+              <button
+                type="button"
+                className="btn-secondary shrink-0"
+                onClick={() => setShowReportUser((open) => !open)}
+              >
+                {REPORT_USER_ENTRY_LABEL}
+              </button>
+            )}
           </div>
+
+          {showReportUser && counterpartReportTarget && (
+            <ReportContentForm
+              target={counterpartReportTarget}
+              viewerId={viewerId}
+              onCancel={() => setShowReportUser(false)}
+            />
+          )}
 
           <ConversationHistoryThread
             messages={orderedMessages}
