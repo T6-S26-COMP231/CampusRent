@@ -151,8 +151,8 @@ export async function suspendReportedUser(report: ReportDoc): Promise<Moderation
 }
 
 /**
- * Warn semantics for audit later (#156).
- * No email/SMS/notification delivery is invented here.
+ * Warn semantics — no email/SMS/notification delivery.
+ * Audit + status handling are applied by the admin orchestration layer.
  */
 export function prepareWarnDecision(report: ReportDoc): ModerationActionDecision {
   validateModerationAction(report, 'warn');
@@ -160,13 +160,13 @@ export function prepareWarnDecision(report: ReportDoc): ModerationActionDecision
     report,
     'warn',
     false,
-    'Warning recorded for audit; no user notification was sent.'
+    'Warning accepted; no user notification was sent.'
   );
 }
 
 /**
  * Dismiss: close without punitive target mutation.
- * Persisted dismissed status belongs to #156.
+ * Status persistence is applied by the admin orchestration layer.
  */
 export function prepareDismissDecision(report: ReportDoc): ModerationActionDecision {
   validateModerationAction(report, 'dismiss');
@@ -174,13 +174,13 @@ export function prepareDismissDecision(report: ReportDoc): ModerationActionDecis
     report,
     'dismiss',
     false,
-    'Dismiss prepared; report status persistence belongs to a later task.'
+    'Dismiss accepted without punitive target action.'
   );
 }
 
 /**
- * Resolve: status change to Resolved belongs to #156.
- * This only validates the action against the report target.
+ * Resolve: no target mutation.
+ * Status persistence is applied by the admin orchestration layer.
  */
 export function prepareResolveDecision(report: ReportDoc): ModerationActionDecision {
   validateModerationAction(report, 'resolve');
@@ -188,7 +188,7 @@ export function prepareResolveDecision(report: ReportDoc): ModerationActionDecis
     report,
     'resolve',
     false,
-    'Resolve prepared; report status persistence belongs to a later task.'
+    'Resolve accepted without target mutation.'
   );
 }
 

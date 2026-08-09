@@ -1,14 +1,18 @@
 import { Listing } from '../models/Listing';
-import { Report, ReportDoc, ReportTargetType } from '../models/Report';
+import {
+  Report,
+  ReportDoc,
+  ReportModerationStatus,
+  ReportTargetType,
+  normalizeReportModerationStatus,
+} from '../models/Report';
 import { User, UserDoc } from '../models/User';
 
 /**
- * US-23.3 — resolve Report rows for admin list/detail APIs.
- * Presentation status is always "open" until US-23.5 persists moderation status.
+ * US-23.3 / US-23.5 — resolve Report rows for admin list/detail APIs.
+ * Status is the persisted Report.status (default/open for legacy docs).
  * Missing targets return exists=false; the Report itself still resolves.
  */
-
-export type PresentationModerationStatus = 'open';
 
 export interface AdminReporterView {
   id: number;
@@ -25,8 +29,7 @@ export interface AdminModerationReportDetail {
   reason: string;
   details: string;
   created_at: string;
-  /** Presentation-only — not a MongoDB field on Report. */
-  status: PresentationModerationStatus;
+  status: ReportModerationStatus;
   target_type: ReportTargetType;
   target_id: number;
 }
@@ -161,7 +164,7 @@ export async function toAdminModerationReportView(
       reason: report.reason,
       details: report.details,
       created_at: report.created_at.toISOString(),
-      status: 'open',
+      status: normalizeReportModerationStatus(report.status),
       target_type: report.target_type,
       target_id: report.target_id,
     },

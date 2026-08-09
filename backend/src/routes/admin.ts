@@ -2,6 +2,8 @@ import { Router } from 'express';
 import { authenticate, requireAdmin } from '../middleware/auth';
 import { User } from '../models/User';
 import { asyncHandler } from '../utils/asyncHandler';
+import { performAdminModerationAction } from '../utils/adminModerationAction';
+import { ModerationActionError } from '../utils/moderationActions';
 import {
   getAdminModerationReport,
   listAdminModerationReports,
@@ -34,10 +36,9 @@ router.get(
 );
 
 /**
- * US-23.3 — admin moderation report list.
+ * US-23.3 / US-23.5 — admin moderation report list.
  * Returns the same Report documents created by POST /api/reports,
- * with resolved reporter/target labels for the moderation queue UI.
- * Status is presentation-only "open" (no persisted moderation status yet).
+ * with resolved reporter/target labels and persisted moderation status.
  */
 router.get(
   '/reports',
@@ -48,7 +49,7 @@ router.get(
 );
 
 /**
- * US-23.3 — admin moderation report detail.
+ * US-23.3 / US-23.5 — admin moderation report detail.
  * Missing target ⇒ target.exists=false; missing Report ⇒ 404.
  */
 router.get(
@@ -65,6 +66,44 @@ router.get(
     }
 
     return res.json(view);
+  })
+);
+
+/**
+ * US-23.5 — execute a moderation action on a report.
+ * administrator_id comes from auth only; target comes from the Report only.
+ * Client administrator_id / target_id / target_type are ignored.
+ */
+router.post(
+  '/reports/:id/actions',
+  asyncHandler(async (req, res) => {
+    const reportId = Number(req.params.id);
+    if (!Number.isInteger(reportId) || reportId <= 0) {
+      return res.status(400).json({ error: 'Invalid report id' });
+    }
+
+    // Ignore any client administrator_id / target_id / target_type — auth + Report only.
+    const { action } = (req.body ?? {}) as { action?: unknown };
+
+    try {
+      const result = await performAdminModerationAction(
+        reportId,
+        action,
+        req.user!.id
+      );
+      return res.status(200).json({
+        action: result.action,
+        report: result.report,
+        target: result.target,
+        audit: result.audit,
+        message: result.decision.message,
+      });
+    } catch (error) {
+      if (error instanceof ModerationActionError) {
+        return res.status(error.statusCode).json({ error: error.message });
+      }
+      throw error;
+    }
   })
 );
 
