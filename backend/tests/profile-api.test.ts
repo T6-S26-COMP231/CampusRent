@@ -202,14 +202,13 @@ describe('US-21.3 GET /api/profile', () => {
 });
 
 describe('US-21.3 PATCH /api/profile', () => {
-  test('verified student can update first_name, last_name, and phone; verification_status unchanged', async () => {
+  test('verified student can update first_name, last_name, and phone', async () => {
     const response = await api(baseUrl, 'PATCH', '/api/profile', {
       token: studentToken(studentId, 'student@mycentennialcollege.ca'),
       body: {
         first_name: '  Updated  ',
         last_name: '  Name  ',
         phone: '  416-555-0111  ',
-        verification_status: 'rejected',
       },
     });
 
@@ -277,7 +276,7 @@ describe('US-21.3 PATCH /api/profile', () => {
     assert.equal(badPhone.status, 400);
   });
 
-  test('update is tied to req.user.id; another student record is not modified', async () => {
+  test('valid update is tied to req.user.id; another student remains unchanged', async () => {
     const beforeOther = await User.findById(otherStudentId).lean();
 
     const response = await api(baseUrl, 'PATCH', '/api/profile', {
@@ -286,33 +285,188 @@ describe('US-21.3 PATCH /api/profile', () => {
         first_name: 'OnlyMe',
         last_name: 'Updated',
         phone: '416-555-0001',
-        id: otherStudentId,
-        user_id: otherStudentId,
-        email: 'hijack@mycentennialcollege.ca',
-        verification_status: 'rejected',
-        role: 'admin',
-        status: 'suspended',
       },
     });
 
     assert.equal(response.status, 200);
     assert.equal(response.data.id, studentId);
     assert.equal(response.data.first_name, 'OnlyMe');
-    assert.equal(response.data.email, 'student@mycentennialcollege.ca');
-    assert.equal(response.data.verification_status, 'verified');
-    assert.equal(response.data.role, 'student');
-    assert.equal(response.data.status, 'active');
-
-    const afterSelf = await User.findById(studentId).lean();
-    assert.equal(afterSelf!.first_name, 'OnlyMe');
-    assert.equal(afterSelf!.email, 'student@mycentennialcollege.ca');
-    assert.equal(afterSelf!.verification_status, 'verified');
-    assert.equal(afterSelf!.role, 'student');
 
     const afterOther = await User.findById(otherStudentId).lean();
     assert.equal(afterOther!.first_name, beforeOther!.first_name);
     assert.equal(afterOther!.last_name, beforeOther!.last_name);
     assert.equal(afterOther!.phone, beforeOther!.phone);
     assert.equal(afterOther!.email, beforeOther!.email);
+  });
+});
+
+describe('US-21.4 owner authorization and protected-field validation', () => {
+  test('body id, user_id, and _id cannot redirect update to another student', async () => {
+    const token = studentToken(studentId, 'student@mycentennialcollege.ca');
+    const beforeOther = await User.findById(otherStudentId).lean();
+    const beforeSelf = await User.findById(studentId).lean();
+
+    for (const field of ['id', 'user_id', '_id'] as const) {
+      const response = await api(baseUrl, 'PATCH', '/api/profile', {
+        token,
+        body: {
+          first_name: 'Hijack',
+          last_name: 'Attempt',
+          phone: '000',
+          [field]: otherStudentId,
+        },
+      });
+      assert.equal(response.status, 400, field);
+      assert.match(String(response.data.error ?? ''), /protected field/i, field);
+    }
+
+    const afterSelf = await User.findById(studentId).lean();
+    const afterOther = await User.findById(otherStudentId).lean();
+    assert.equal(afterSelf!.first_name, beforeSelf!.first_name);
+    assert.equal(afterSelf!.last_name, beforeSelf!.last_name);
+    assert.equal(afterOther!.first_name, beforeOther!.first_name);
+    assert.equal(afterOther!.email, beforeOther!.email);
+  });
+
+  test('verification_status spoof values are rejected and stored status unchanged', async () => {
+    const token = studentToken(studentId, 'student@mycentennialcollege.ca');
+
+    for (const spoof of ['verified', 'rejected', 'pending'] as const) {
+      const response = await api(baseUrl, 'PATCH', '/api/profile', {
+        token,
+        body: {
+          first_name: 'Ramika',
+          last_name: 'Student',
+          phone: '416-555-0100',
+          verification_status: spoof,
+        },
+      });
+      assert.equal(response.status, 400, spoof);
+      assert.match(String(response.data.error ?? ''), /verification_status/i, spoof);
+    }
+
+    const stored = await User.findById(studentId).lean();
+    assert.equal(stored!.verification_status, 'verified');
+    assert.equal(stored!.first_name, 'Ramika');
+  });
+
+  test('email cannot be changed through profile update', async () => {
+    const response = await api(baseUrl, 'PATCH', '/api/profile', {
+      token: studentToken(studentId, 'student@mycentennialcollege.ca'),
+      body: {
+        first_name: 'Ramika',
+        last_name: 'Student',
+        phone: '416-555-0100',
+        email: 'hijack@mycentennialcollege.ca',
+      },
+    });
+    assert.equal(response.status, 400);
+    assert.match(String(response.data.error ?? ''), /email/i);
+
+    const stored = await User.findById(studentId).lean();
+    assert.equal(stored!.email, 'student@mycentennialcollege.ca');
+  });
+
+  test('role and status cannot be changed through profile update', async () => {
+    const token = studentToken(studentId, 'student@mycentennialcollege.ca');
+
+    const roleAttempt = await api(baseUrl, 'PATCH', '/api/profile', {
+      token,
+      body: {
+        first_name: 'Ramika',
+        last_name: 'Student',
+        phone: '416-555-0100',
+        role: 'admin',
+      },
+    });
+    assert.equal(roleAttempt.status, 400);
+    assert.match(String(roleAttempt.data.error ?? ''), /role/i);
+
+    const statusAttempt = await api(baseUrl, 'PATCH', '/api/profile', {
+      token,
+      body: {
+        first_name: 'Ramika',
+        last_name: 'Student',
+        phone: '416-555-0100',
+        status: 'suspended',
+      },
+    });
+    assert.equal(statusAttempt.status, 400);
+    assert.match(String(statusAttempt.data.error ?? ''), /status/i);
+
+    const stored = await User.findById(studentId).lean();
+    assert.equal(stored!.role, 'student');
+    assert.equal(stored!.status, 'active');
+  });
+
+  test('password and password_hash are rejected; existing hash unchanged', async () => {
+    const token = studentToken(studentId, 'student@mycentennialcollege.ca');
+    const before = await User.findById(studentId).lean();
+
+    const passwordAttempt = await api(baseUrl, 'PATCH', '/api/profile', {
+      token,
+      body: {
+        first_name: 'Ramika',
+        last_name: 'Student',
+        phone: '416-555-0100',
+        password: 'new-secret',
+      },
+    });
+    assert.equal(passwordAttempt.status, 400);
+    assert.match(String(passwordAttempt.data.error ?? ''), /password/i);
+
+    const hashAttempt = await api(baseUrl, 'PATCH', '/api/profile', {
+      token,
+      body: {
+        first_name: 'Ramika',
+        last_name: 'Student',
+        phone: '416-555-0100',
+        password_hash: 'forged-hash',
+      },
+    });
+    assert.equal(hashAttempt.status, 400);
+    assert.match(String(hashAttempt.data.error ?? ''), /password_hash/i);
+
+    const after = await User.findById(studentId).lean();
+    assert.equal(after!.password_hash, before!.password_hash);
+  });
+
+  test('created_at cannot be changed; valid update still returns safe public user', async () => {
+    const token = studentToken(studentId, 'student@mycentennialcollege.ca');
+    const before = await User.findById(studentId).lean();
+
+    const createdAttempt = await api(baseUrl, 'PATCH', '/api/profile', {
+      token,
+      body: {
+        first_name: 'Ramika',
+        last_name: 'Student',
+        phone: '416-555-0100',
+        created_at: '2000-01-01T00:00:00.000Z',
+      },
+    });
+    assert.equal(createdAttempt.status, 400);
+    assert.match(String(createdAttempt.data.error ?? ''), /created_at/i);
+
+    const valid = await api(baseUrl, 'PATCH', '/api/profile', {
+      token,
+      body: {
+        first_name: 'Safe',
+        last_name: 'Update',
+        phone: '416-555-2222',
+      },
+    });
+    assert.equal(valid.status, 200);
+    assert.equal(valid.data.first_name, 'Safe');
+    assert.equal(valid.data.last_name, 'Update');
+    assert.equal(valid.data.phone, '416-555-2222');
+    assert.equal(valid.data.verification_status, 'verified');
+    assert.equal(valid.data.email, 'student@mycentennialcollege.ca');
+    assert.equal(valid.data.role, 'student');
+    assert.equal(valid.data.status, 'active');
+    assert.equal('password_hash' in valid.data, false);
+
+    const after = await User.findById(studentId).lean();
+    assert.equal(after!.created_at.toISOString(), before!.created_at.toISOString());
+    assert.equal(after!.password_hash, before!.password_hash);
   });
 });

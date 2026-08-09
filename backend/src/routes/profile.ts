@@ -6,21 +6,45 @@ import { asyncHandler } from '../utils/asyncHandler';
 const router = Router();
 
 /**
- * US-21.3 — get-profile / update-profile for the verified student.
+ * US-21.3 / US-21.4 — get-profile / update-profile for the verified student.
  *
  * GET  /api/profile
  * PATCH /api/profile
  *
- * Always targets req.user.id — no user id in path/body.
+ * Always targets req.user.id — no user id in path/body/query.
  * Editable fields only: first_name, last_name, phone.
- * Protected fields (email, verification_status, role, status, id, …) are
- * never written here. Stronger malicious-body rejection: US-21.4.
  *
- * Auth: authenticate + requireVerifiedStudent (release-wide approved-account
- * constraint for US-04–US-24 protected features).
+ * US-21.4 protected-field policy: if a protected/security User field is
+ * supplied in the PATCH body, reject with 400 (do not silently ignore).
+ *
+ * Auth: authenticate + requireVerifiedStudent.
  * File name avoids backend/src/routes/users.ts (Iteration 1 verify forbid).
  */
 router.use(authenticate, requireVerifiedStudent);
+
+/** Identity / security fields — presence in PATCH body is a validation error. */
+export const PROTECTED_PROFILE_BODY_FIELDS = [
+  'email',
+  'verification_status',
+  'role',
+  'status',
+  'id',
+  '_id',
+  'user_id',
+  'created_at',
+  'password',
+  'password_hash',
+] as const;
+
+export type ProtectedProfileBodyField = (typeof PROTECTED_PROFILE_BODY_FIELDS)[number];
+
+export function findProtectedProfileFieldsInBody(
+  body: Record<string, unknown>
+): ProtectedProfileBodyField[] {
+  return PROTECTED_PROFILE_BODY_FIELDS.filter((field) =>
+    Object.prototype.hasOwnProperty.call(body, field)
+  );
+}
 
 function normalizeRequiredName(raw: unknown, fieldLabel: string): string | { error: string } {
   if (raw === undefined || raw === null) {
@@ -60,49 +84,41 @@ router.get(
 
 /**
  * Full editable-form PATCH (matches frontend UpdateProfileBody).
- * Requires first_name, last_name, and phone on every request.
- * Protected body keys are ignored — not applied.
+ * Requires first_name, last_name, and phone.
+ * Protected User fields in the body → 400 (US-21.4).
  */
 router.patch(
   '/',
   asyncHandler(async (req, res) => {
-    const body = (req.body ?? {}) as {
-      first_name?: unknown;
-      last_name?: unknown;
-      phone?: unknown;
-      email?: unknown;
-      verification_status?: unknown;
-      role?: unknown;
-      status?: unknown;
-      id?: unknown;
-      password?: unknown;
-      password_hash?: unknown;
-    };
+    const body = req.body;
+    if (body === null || typeof body !== 'object' || Array.isArray(body)) {
+      return res.status(400).json({ error: 'Invalid profile update body' });
+    }
 
-    // Client identity / protected fields are ignored — only req.user.id is updated.
-    void body.email;
-    void body.verification_status;
-    void body.role;
-    void body.status;
-    void body.id;
-    void body.password;
-    void body.password_hash;
+    const record = body as Record<string, unknown>;
+    const protectedFields = findProtectedProfileFieldsInBody(record);
+    if (protectedFields.length > 0) {
+      return res.status(400).json({
+        error: `Cannot update protected field(s): ${protectedFields.join(', ')}`,
+      });
+    }
 
-    const firstName = normalizeRequiredName(body.first_name, 'First name');
+    const firstName = normalizeRequiredName(record.first_name, 'First name');
     if (typeof firstName === 'object') {
       return res.status(400).json({ error: firstName.error });
     }
 
-    const lastName = normalizeRequiredName(body.last_name, 'Last name');
+    const lastName = normalizeRequiredName(record.last_name, 'Last name');
     if (typeof lastName === 'object') {
       return res.status(400).json({ error: lastName.error });
     }
 
-    const phone = normalizeOptionalPhone(body.phone);
+    const phone = normalizeOptionalPhone(record.phone);
     if (typeof phone === 'object') {
       return res.status(400).json({ error: phone.error });
     }
 
+    // Ownership: always the authenticated student — never a client-selected id.
     const user = await User.findById(req.user!.id);
     if (!user) {
       return res.status(404).json({ error: 'User not found' });
