@@ -1,164 +1,276 @@
-# CampusRent — Iteration 1 Test Bed
+# CampusRent — Release 1.0
 
-CampusRent is a student-to-student item-rental platform for COMP231 Team 1. This package is intentionally limited to the **twelve Must-Have user stories planned for Iteration 1 (54 story points)**.
+CampusRent is a student-to-student item rental platform developed for COMP231 by Team 6.
 
-## Role and access rules
+Release 1.0 includes the completed functionality from Iteration 1 and Iteration 2, covering guest access, registered student rental workflows, messaging, reporting, reviews, profile management, student verification, moderation, and administrator activity monitoring.
 
-| Role/account state | Allowed in Iteration 1 | Not allowed |
-|---|---|---|
-| Guest | Register and sign in | Browse the student catalogue, view protected item details, create listings, or use rental functions |
-| Pending or rejected student | View the read-only account verification status | All protected registered-student functions |
-| Verified Registered Student User | Browse/search listings, view full details, create/manage own listings, submit requests, view incoming requests for owned listings, and approve owned-listing requests | Edit/delete another student's listing or approve another owner's request |
-| System Administration Team | View pending registrations and approve or reject them | **Browse, create, edit, delete, or rent student items** |
+---
 
-The student and administrator roles are deliberately separate. An administrator is **not** treated as a verified student by either the React route guards or the Express API middleware.
+## Technology Stack
 
-## Iteration 1 scope
+### Frontend
+- React
+- TypeScript
+- Vite
+- React Router
 
-| ID | User story | Included behaviour |
-|---|---|---|
-| US-03 | Register using an institutional email | Required-field validation, institutional-email validation, duplicate protection, Pending Verification status |
-| US-22 | Verify student accounts | Admin-only pending queue with Approve and Reject actions |
-| US-04 | Create item listings | Verified-student-only creation, required fields, automatic owner assignment, maximum five images |
-| US-05 | Edit item listings | Owner-only editing and image removal/addition while keeping five-image maximum |
-| US-06 | Remove item listings | Owner-only removal with confirmation |
-| US-07 | Update item availability | Owner-only Available/Unavailable changes that persist |
-| US-08 | Browse available listings | Verified-student catalogue, listing cards, availability display, and pagination |
-| US-09 | Search using keywords and filters | Keyword, category, and availability filters plus clear no-results state |
-| US-10 | View item details | Full details, terms, images, availability, and owner contact information for verified students |
-| US-11 | Submit rental requests | Required future dates, available-item validation, own-item and duplicate protection, Pending status |
-| US-12 | View incoming rental requests | Owner-only incoming dashboard with renter, dates, and status |
-| US-13 | Approve rental requests | Owner-only approval, Accepted status, item becomes Unavailable, renter can see the Accepted result on the item page |
+### Backend
+- Node.js
+- Express
+- TypeScript
+- MongoDB
+- Mongoose
+- JWT authentication
 
-## Intentionally excluded from this package
+### Deployment
+- Frontend: Vercel
+- Backend: Render
+- Database: MongoDB Atlas
 
-These Release 1.0 stories belong outside Iteration 1 and are not implemented here:
+---
 
-- US-01 and US-02 guest catalogue/details
-- US-14 decline rental requests
-- US-15 full request tracking, cancellation, and completed-rental workflow
-- US-16 to US-18 conversations and messaging
-- US-19 ratings and reviews
-- US-20 reporting users or listings
-- US-21 profile management
-- US-23 moderation
-- US-24 platform monitoring and reports
+## User Roles
 
-The small renter-visible request-status panel is present only because US-13 requires an Accepted status to be visible to the renter. It is not a full US-15 dashboard.
-
-## Technology
-
-| Layer | Technology |
+| Role | Access |
 |---|---|
-| Frontend | React 18, TypeScript, Vite, Tailwind CSS |
-| Backend | Node.js, Express, TypeScript |
-| Authentication | JWT |
-| Persistence | MongoDB (Mongoose) via `MONGODB_URI` |
-| API | REST over HTTP/JSON |
+| Guest | Browse limited listing previews, search/filter listings, view basic item details, register, and sign in |
+| Pending Student | View account verification status while waiting for administrator approval |
+| Verified Registered Student | Browse listings, manage own listings, submit/manage rental requests, message other students, report content, submit reviews, and manage profile |
+| System Administrator | Verify student accounts, review reports, moderate users/listings, and monitor platform activity |
 
-> Application data (users, listings, rental requests) is stored in MongoDB. Configure `MONGODB_URI` before starting the backend. The API refuses to start without a valid MongoDB connection and does not fall back to local JSON storage.
->
-> **Image files** are still written to `backend/uploads/` on the local filesystem. MongoDB persists listing records and image *filenames*, but uploaded binary files are not durable on ephemeral hosts (for example Render’s default disk). For production image durability, mount a Render persistent disk at `backend/uploads` or move uploads to object storage (S3, Cloudinary, etc.).
+Administrators and registered students have separate permissions. Administrator access does not automatically provide registered-student rental permissions.
 
-## Install and run
+---
 
-Requirements: Node.js 18 or newer and npm.
+## Release 1.0 Features
 
-```bash
-npm install
-npm run install:all
-npm run verify:iteration1
-npm run build
-npm run dev
-```
+### Guest Features
 
-- Frontend: `http://localhost:5173`
-- Backend health check: `http://localhost:3001/api/health`
+- **US-01 — Browse and search limited listing previews**
+  - Browse public listing previews
+  - Keyword search
+  - Category filtering
+  - Owner/contact information remains hidden
+  - Restricted actions prompt registration/sign-in
 
-The root `dev` command seeds demonstration data and starts both applications.
+- **US-02 — View basic item information**
+  - View title
+  - View category
+  - View description
+  - View availability
+  - Owner/contact information remains hidden
+  - Rental actions require registration
 
-## Demonstration accounts
+---
 
-| Role | Email | Password |
-|---|---|---|
-| System Administration Team | `admin@mycentennialcollege.ca` | `admin123` |
-| Verified student | `maria@mycentennialcollege.ca` | `student123` |
-| Verified student | `john@mycentennialcollege.ca` | `student123` |
+### Registration and Verification
 
-New registrations begin in **Pending Verification** status.
+- **US-03 — Register using an institutional email**
+  - Required-field validation
+  - Institutional email validation
+  - Duplicate-account protection
+  - New accounts begin as Pending Verification
 
-## Required role-separation demonstration
+- **US-22 — Verify student accounts**
+  - Administrator reviews pending registrations
+  - Approve student account
+  - Reject student account
+  - Request More Information while keeping the account Pending
 
-1. Sign in as the administrator.
-2. Confirm the navigation contains only **Verify Students** and **Account**.
-3. Manually enter `/listings/new`; the app redirects to `/admin`.
-4. Sign in as a verified student and confirm **List Item** is available.
-5. This behaviour is also enforced by the API, so an administrator token receives HTTP 403 from listing and rental routes.
+---
 
-## Environment variables
+### Listing Management
 
-Backend:
+- **US-04 — Create item listings**
+  - Title
+  - Category
+  - Description
+  - Availability
+  - Rental terms
+  - Automatic owner assignment
+  - Multiple listing images
 
-```env
-PORT=3001
-NODE_ENV=development
-JWT_SECRET=replace-with-a-long-random-secret
-FRONTEND_URL=http://localhost:5173
-MONGODB_URI=mongodb+srv://USERNAME:PASSWORD@CLUSTER_HOST/DATABASE_NAME
-```
+- **US-05 — Edit item listings**
+  - Owners can edit their own listings
+  - Existing images can be preserved
+  - New images can be added
 
-Frontend, only when the API is deployed separately:
+- **US-06 — Remove item listings**
+  - Owner-only deletion
+  - Confirmation before removal
 
-```env
-VITE_API_URL=https://your-backend.example.com/api
-```
+- **US-07 — Update availability**
+  - Mark listings Available or Unavailable
 
-Never commit `.env` files, JWT secrets, passwords, database credentials, or API keys.
+- **US-08 — Browse available listings**
+  - Registered-student catalogue
+  - Pagination
+  - Availability information
 
-### Legacy JSON migration (optional, one-time)
+- **US-09 — Search using keywords and filters**
+  - Keyword search
+  - Category filter
+  - Availability filter
+  - Clear no-results state
 
-If you still have a local `backend/data/store.json` from the old test-bed store, import missing rows into MongoDB with:
+- **US-10 — View registered-student item details**
+  - Full listing information
+  - Availability
+  - Rental terms
+  - Owner information for authorized users
+  - Listing image gallery
 
-```bash
-npm run migrate:store --prefix backend
-```
+---
 
-This script inserts only missing users, listings, and rental requests. It does **not** run on normal startup, does not overwrite existing MongoDB documents, and does not delete the JSON file.
+## Listing Image Rules
 
-## Project structure
+Each listing supports a maximum of **5 images**.
+
+Supported formats:
+
+- JPG / JPEG
+- PNG
+- WEBP
+
+Each image must be no larger than **5 MB**.
+
+Both frontend and backend validation enforce the image limit.
+
+---
+
+## Rental Requests
+
+- **US-11 — Submit rental request**
+  - Select rental dates
+  - Submit requests for available listings
+  - New requests begin as Pending
+
+- **US-12 — View incoming rental requests**
+  - Listing owners can review requests
+  - View renter information
+  - View rental dates
+  - View request status
+
+- **US-13 — Approve rental requests**
+  - Listing owners can accept valid requests
+  - Request status becomes Accepted
+
+- **US-14 — Decline rental requests**
+  - Listing owners can decline requests
+  - Request status becomes Declined
+
+- **US-15 — Track rental request status**
+  - Pending
+  - Accepted
+  - Declined
+  - Cancelled
+  - Completed
+
+---
+
+## Messaging
+
+- **US-16 — Start conversations**
+  - Registered students can start conversations with other students
+  - Starting a conversation requires an initial nonblank message
+  - Empty conversations are not created
+  - Conversation list shows the most recent message preview
+
+- **US-17 — Send messages**
+  - Participants can send additional messages
+  - Blank messages are rejected
+  - Non-participants cannot access the conversation
+
+- **US-18 — View conversation history**
+  - Messages are displayed chronologically
+  - Previous messages remain available
+  - Access is limited to conversation participants
+
+---
+
+## Reviews, Reports, and Profile
+
+- **US-19 — Ratings and reviews**
+  - Reviews are available after a completed rental
+  - Validation prevents incomplete reviews
+  - Reviews can be displayed with listings
+
+- **US-20 — Report inappropriate users or listings**
+  - Submit reports with a reason/details
+  - Reports are stored for administrator review
+  - Incomplete reports are rejected
+
+- **US-21 — Manage profile**
+  - View profile
+  - Update permitted profile fields
+  - Validation for invalid information
+  - Verification status is visible but cannot be changed by the user
+
+---
+
+## Administration
+
+- **US-23 — Moderation**
+  - Review submitted reports
+  - Review reported listings/users
+  - Warn
+  - Remove listing
+  - Suspend user
+  - Resolve/dismiss moderation cases
+  - Moderation actions are recorded
+
+- **US-24 — Activity monitoring and reporting**
+  - Administrator activity dashboard
+  - Activity filtering
+  - Summary/report generation
+  - Clear no-data state
+
+---
+
+## Access Control
+
+CampusRent enforces role-based authorization on both the frontend and backend.
+
+### Guests
+Guests can access only public guest endpoints.
+
+### Pending Students
+Pending students cannot use protected registered-student rental functionality.
+
+### Verified Students
+Protected student functionality requires:
+
+- Authentication
+- Verified student status
+
+### Administrators
+Administrator functionality requires:
+
+- Authentication
+- Administrator role
+
+Protected authorization is enforced by backend middleware and supported by frontend route handling.
+
+---
+
+## Project Structure
 
 ```text
 CampusRent/
-├── backend/src/
-│   ├── config/env.ts
-│   ├── db/connection.ts
-│   ├── models/
-│   ├── middleware/auth.ts
-│   ├── routes/
-│   │   ├── auth.ts
-│   │   ├── admin.ts
-│   │   ├── listings.ts
-│   │   └── requests.ts
-│   ├── utils/
-│   ├── app.ts
-│   ├── index.ts
-│   └── seed.ts
-├── backend/scripts/migrate-store-json.ts
-├── frontend/src/
-│   ├── api/
-│   ├── components/
-│   ├── context/
-│   ├── pages/
-│   ├── utils/
-│   └── App.tsx
-├── scripts/verify-iteration1.mjs
-├── ITERATION1_ACCEPTANCE_CHECKLIST.md
-├── TAC_ALIGNMENT_MATRIX.md
-└── README.md
-```
-
-## Acceptance-testing order
-
-US-03 → US-22 → US-04 → US-05 → US-06 → US-07 → US-08 → US-09 → US-10 → US-11 → US-12 → US-13.
-
-A story should be reported as complete only after every acceptance test passes in the shared test bed.
+├── backend/
+│   ├── src/
+│   │   ├── models/
+│   │   ├── routes/
+│   │   ├── middleware/
+│   │   └── index.ts
+│   └── tests/
+│
+├── frontend/
+│   ├── src/
+│   │   ├── pages/
+│   │   ├── components/
+│   │   ├── utils/
+│   │   └── api/
+│   └── public/
+│
+└── scripts/
